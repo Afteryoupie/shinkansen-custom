@@ -591,7 +591,6 @@ if (browser.webNavigation && browser.webNavigation.onCreatedNavigationTarget) {
       newTabId, sourceTabId, slot, url: details.url,
     });
   });
-  });
 } else {
   debugLog('warn', 'system', 'webNavigation.onCreatedNavigationTarget unavailable, cross-tab sticky disabled', {});
 }
