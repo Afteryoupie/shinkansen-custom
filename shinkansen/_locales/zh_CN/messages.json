@@ -1,0 +1,26 @@
+{
+  "extName": {
+    "message": "Shinkansen Custom",
+    "description": "扩展功能名称"
+  },
+  "extDescription": {
+    "message": "快速、流畅的网页、YouTube 字幕翻译扩展功能。支持 8 种目标语言与多种 AI 引擎，数据不经过第三方。"
+  },
+  "actionTitle": {
+    "message": "Shinkansen Custom 翻译",
+    "description": "工具列圖示 tooltip（manifest action.default_title）"
+  },
+  "cmdTranslateMain": {
+    "message": "翻译本页 — 主要预设",
+    "description": "快速鍵說明（chrome://extensions/shortcuts）"
+  },
+  "cmdTranslatePreset2": {
+    "message": "翻译本页 — 预设 2"
+  },
+  "cmdTranslatePreset3": {
+    "message": "翻译本页 — 预设 3"
+  },
+  "cmdSendInstapaper": {
+    "message": "发送到 Instapaper"
+  }
+}

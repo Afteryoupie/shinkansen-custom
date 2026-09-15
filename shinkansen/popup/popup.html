@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <!-- iOS Safari popup sheet / popover 需要 viewport meta：沒有時 WebKit 用
+       ~980px 桌面虛擬 viewport，固定 280px 的 body 會縮在左邊。放大策略見
+       popup.css 的 body.runtime-ios（zoom）註解。桌面瀏覽器的 extension popup
+       一律忽略 viewport meta，加了無副作用 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shinkansen Custom</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1><img src="../icons/icon-128.png" alt="" class="page-title-icon">Shinkansen Custom<span class="update-dot" id="update-dot" hidden data-i18n-attr-title="popup.title.updateAvailable"></span></h1>
+    <a class="version" id="version" href="https://jimmysu0309.github.io/shinkansen/release-notes.html" target="_blank" rel="noopener"></a>
+  </header>
+
+  <main>
+    <!-- v1.6.5: 剛升級的歡迎條(CWS 自動更新後顯示一次性綠色 banner) -->
+    <div id="welcome-banner" class="welcome-banner" hidden>
+      <strong id="welcome-banner-title">🎉 已升級</strong>
+      <p class="welcome-banner-subtitle" data-i18n="popup.banner.welcomeBullets">本版新增：</p>
+      <ul id="welcome-bullets" class="welcome-bullets"></ul>
+      <button id="welcome-banner-dismiss" class="welcome-banner-dismiss" type="button" data-i18n="popup.banner.welcomeDismiss">知道了</button>
+    </div>
+
+    <!-- v1.6.1: 有新版可下載時顯示 banner -->
+    <button id="update-banner" class="update-banner" type="button" hidden>
+      <strong data-i18n="popup.banner.updateNoticeTitle">📦 有新版可下載</strong>
+      <span id="update-banner-version"></span>
+    </button>
+
+    <!-- iOS / iPadOS 上架提示:整條可點連到 App Store(無 country 前綴由 Apple 依地區導向),
+         × 永久關閉(storage.sync.iosPromoDismissed);iOS build 不顯示(popup.js gate) -->
+    <div id="ios-promo-banner" class="ios-promo-banner" hidden>
+      <a id="ios-promo-link" class="ios-promo-link" href="https://apps.apple.com/app/id6776958298" target="_blank" rel="noopener" data-i18n="popup.iosPromo.text">📱 iOS／iPadOS 版已上架 · 前往 App Store</a>
+      <button id="ios-promo-dismiss" class="ios-promo-dismiss" type="button" data-i18n-attr-title="popup.iosPromo.dismiss" data-i18n-attr-aria-label="popup.iosPromo.dismiss">×</button>
+    </div>
+
+    <button id="translate-btn" class="primary" data-i18n="popup.action.translate">翻譯本頁</button>
+    <button id="edit-btn" class="secondary" hidden data-i18n="popup.action.editStart">編輯譯文</button>
+    <!-- 送到 Instapaper：只有 instapaperEnabled && 已連結 才由 popup.js 顯示 -->
+    <button id="send-to-instapaper-btn" class="secondary" hidden type="button" data-i18n="popup.action.sendToInstapaper">送到 Instapaper</button>
+
+    <!-- v1.5.0: 顯示模式切換(單語覆蓋 / 雙語對照) -->
+    <div class="display-mode-row">
+      <span class="display-mode-label" data-i18n="popup.label.displayMode">顯示模式</span>
+      <div class="display-mode-toggle" role="radiogroup" data-i18n-attr-aria-label="popup.label.displayMode">
+        <button id="mode-single" class="mode-btn" type="button" role="radio" aria-checked="true" data-i18n="popup.label.modeSingle">單語覆蓋</button>
+        <button id="mode-dual"   class="mode-btn" type="button" role="radio" aria-checked="false" data-i18n="popup.label.modeDual">雙語對照</button>
+      </div>
+    </div>
+
+    <!-- 翻譯目標語言(從 options 搬來)。option label 維持 native script 不 i18n -->
+    <div class="row">
+      <label for="targetLanguage" data-i18n="popup.label.targetLanguage">翻譯成</label>
+      <select id="targetLanguage">
+        <option value="zh-TW">繁體中文（台灣）</option>
+        <option value="zh-CN">简体中文（中国）</option>
+        <option value="en">English</option>
+        <option value="ja">日本語</option>
+        <option value="ko">한국어</option>
+        <option value="es">Español</option>
+        <option value="fr">Français</option>
+        <option value="de">Deutsch</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label for="auto" data-i18n="popup.label.autoTranslate">自動翻譯指定網站</label>
+      <input type="checkbox" id="auto">
+    </div>
+
+    <!-- 簡繁自動互轉:只在翻譯目標為 zh-TW / zh-CN 時顯示(popup.js 與 target picker 連動) -->
+    <div class="row" id="auto-convert-zh-row" hidden>
+      <label for="auto-convert-zh-toggle" data-i18n="popup.label.autoConvertZh">簡繁自動互轉（免費）</label>
+      <input type="checkbox" id="auto-convert-zh-toggle">
+    </div>
+
+    <!-- v1.2.12: 只在 YouTube 頁面時顯示 -->
+    <div class="row" id="yt-subtitle-row" hidden>
+      <label for="yt-subtitle-toggle" data-i18n="popup.label.ytSubtitle">YouTube 字幕翻譯</label>
+      <input type="checkbox" id="yt-subtitle-toggle">
+    </div>
+
+    <!-- commit 5a：只在 Drive 影片 viewer 顯示（drive.google.com/file/） -->
+    <div class="row" id="drive-subtitle-row" hidden>
+      <label for="drive-subtitle-toggle" data-i18n="popup.label.driveSubtitle">Drive 影片字幕翻譯</label>
+      <input type="checkbox" id="drive-subtitle-toggle">
+    </div>
+
+    <div class="row" id="yt-caption-size-row" hidden>
+      <label for="yt-caption-size" data-i18n="popup.label.ytCaptionSize">字幕大小</label>
+      <select id="yt-caption-size">
+        <option value="100">100%</option>
+        <option value="110">110%</option>
+        <option value="120">120%</option>
+        <option value="130">130%</option>
+        <option value="140">140%</option>
+        <option value="150">150%</option>
+        <option value="160">160%</option>
+        <option value="170">170%</option>
+        <option value="180">180%</option>
+        <option value="190">190%</option>
+        <option value="200">200%</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label for="glossary-toggle" data-i18n="popup.label.glossary">術語表一致化</label>
+      <input type="checkbox" id="glossary-toggle">
+    </div>
+
+    <div class="cache-row">
+      <span id="cache-info" class="cache-info" data-i18n="popup.cache.loading">快取：讀取中⋯</span>
+      <button id="clear-cache-btn" class="link small" data-i18n="popup.cache.clear">清除快取</button>
+      <span id="clear-cache-confirm" class="clear-cache-confirm" hidden>
+        <span data-i18n="popup.cache.confirm">確定清除？</span>
+        <button id="clear-cache-yes" class="link small clear-cache-danger" data-i18n="popup.cache.confirmYes">是</button>
+        <button id="clear-cache-no" class="link small" data-i18n="popup.cache.confirmNo">否</button>
+      </span>
+    </div>
+
+    <div class="cache-row">
+      <span id="usage-info" class="cache-info" data-i18n="popup.usage.loading">累計費用：讀取中⋯</span>
+      <button id="clear-usage-btn" class="link small" data-i18n="popup.usage.clear">清除</button>
+      <span id="clear-usage-confirm" class="clear-cache-confirm" hidden>
+        <span data-i18n="popup.usage.confirm">歸零？</span>
+        <button id="clear-usage-yes" class="link small clear-cache-danger" data-i18n="popup.cache.confirmYes">是</button>
+        <button id="clear-usage-no" class="link small" data-i18n="popup.cache.confirmNo">否</button>
+      </span>
+    </div>
+
+    <div id="status" class="status" data-i18n="popup.status.ready">狀態：就緒</div>
+  </main>
+
+  <footer>
+    <button id="options-btn" class="link" data-i18n="popup.footer.options">設定</button>
+    <button id="translate-doc-btn" class="link" type="button" data-i18n="popup.footer.translateDoc">翻譯文件</button>
+    <span id="shortcut-hint" class="hint"></span>
+  </footer>
+
+  <script src="../lib/i18n.js"></script>
+  <!-- shortcut-utils.js（UMD，window.__SKShortcuts）：popup 用 macifyCommandShortcut
+       把 built-in 快速鍵字串在 Mac 上顯示成 ⌥S。普通 script 早於 popup.js module 載入。 -->
+  <script src="../lib/shortcut-utils.js"></script>
+  <!-- instapaper-keys.js（gitignored，consumer 金鑰）：classic script 早於 popup.js
+       module 執行，掛上 globalThis.__SK；fresh clone 無此檔時 404 無害，功能停用 -->
+  <script src="../lib/instapaper-keys.js"></script>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

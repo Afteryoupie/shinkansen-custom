@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title data-i18n="doc.settingsPage.title">文件翻譯設定 — Shinkansen</title>
+  <link rel="stylesheet" href="../options/options.css">
+  <style>
+    /* settings 頁簡單版面；options.css 既有 .container/section/label 樣式直接沿用 */
+    .container { max-width: 880px; }
+    .danger-zone {
+      border: 1px solid #fbbf24; background: #fffbeb; padding: 14px 16px;
+      border-radius: 6px; margin-top: 10px;
+    }
+    .danger-zone button { margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div id="save-bar" class="save-bar" hidden></div>
+
+  <div class="container">
+    <h1><img src="../icons/icon-128.png" alt="" class="page-title-icon"><span data-i18n="doc.settingsPage.title">文件翻譯設定</span></h1>
+
+    <section>
+      <h2 data-i18n="doc.settingsPage.section.quality.title">翻譯品質</h2>
+      <p class="muted" style="margin-top:0" data-i18n-html="doc.settingsPage.section.quality.note.html">「翻譯前自動建立術語對照表」已升級為<strong>文章術語表</strong>功能（v1.8.49）：在文件翻譯主畫面點「先建立文章術語表」按鈕，可以讓 AI 抽出對照表、編輯、匯入匯出 JSON。每篇文章獨立、不持久化，靠匯出 JSON 跨次保存</p>
+
+      <label class="checkbox-label" style="margin-top:14px">
+        <input type="checkbox" id="td-applyFixedGlossary">
+        <span data-i18n="doc.settingsPage.applyFixedGlossary">套用我自訂的固定術語表</span>
+      </label>
+      <small class="muted" style="display:block;margin-top:4px" data-i18n="doc.settingsPage.applyFixedGlossary.hint">使用「設定 → 術語表」分頁裡編輯的固定譯名對照（與網頁翻譯共用同一份）。例如指定 Tokyo→東京，每次翻文件都會用這個譯名</small>
+    </section>
+
+    <section>
+      <h2 data-i18n="doc.settingsPage.section.prompt.title">翻譯指令</h2>
+      <p class="muted" data-i18n-html="doc.settingsPage.section.prompt.hint.html">這是給 AI 的翻譯指令（system prompt）。可以自訂翻譯風格、用語偏好、強調規則 — 例如「請以新聞稿口吻翻譯」「保留所有英文公司名」。<strong>只影響文件翻譯，不會動到網頁翻譯</strong>。一般使用者不用改</p>
+      <label>
+        <textarea id="td-systemPrompt" rows="14" style="font-family: monospace; font-size: 12px;"></textarea>
+      </label>
+      <button type="button" id="td-reset-prompt" class="secondary" data-i18n="doc.settingsPage.btn.resetPrompt">重置為預設值</button>
+    </section>
+
+    <section>
+      <h2 data-i18n="doc.settingsPage.section.advanced.title">進階</h2>
+
+      <label>
+        <span data-i18n="doc.settingsPage.label.temperature">翻譯創意度（temperature）</span>
+        <input type="number" id="td-temperature" step="0.05" min="0" max="2" style="max-width:120px">
+      </label>
+      <small class="muted" style="display:block;margin-top:4px;margin-bottom:14px" data-i18n="doc.settingsPage.hint.temperature">數字越低翻譯越穩定（人名 / 術語前後一致、用詞保守），越高越有創意（行文流暢但可能跑掉）。範圍 0–2，預設 0.5。合約 / 技術文件適合 0.3–0.5；散文 / 文章可調到 1 左右。改數字後再翻同一份文件會自動重翻（不會用舊的）</small>
+
+      <div class="danger-zone">
+        <strong data-i18n="doc.settingsPage.danger.title">清除所有文件翻譯記憶</strong>
+        <p class="muted" style="margin-top:4px" data-i18n-html="doc.settingsPage.danger.hint.html">系統會把每次翻譯結果記在本機，下次翻同一段文字直接用，不重複收費。按下這個按鈕會清掉所有文件的翻譯記憶 — 下次翻舊文件會重新呼叫 AI（也會重新計費）。<br>適用情境：換了上面的「翻譯指令」想全部重翻試試；或覺得舊翻譯品質不好想重來。<br><strong>不影響網頁翻譯、字幕翻譯、術語表的記憶</strong></p>
+        <button type="button" id="td-clear-all-cache-btn" class="secondary" data-i18n="doc.settingsPage.btn.clearAllCache">清除所有文件翻譯記憶</button>
+        <span id="td-clear-cache-status" class="muted" style="margin-left:10px"></span>
+      </div>
+    </section>
+  </div>
+
+  <script src="../lib/i18n.js"></script>
+  <script type="module" src="settings.js"></script>
+</body>
+</html>

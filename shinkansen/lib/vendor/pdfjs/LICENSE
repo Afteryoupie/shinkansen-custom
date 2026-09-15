@@ -1,0 +1,13 @@
+PDF.js — Apache License 2.0
+
+Copyright (c) Mozilla Foundation
+
+Source: https://github.com/mozilla/pdf.js
+Vendored version: 4.10.38
+Files included: pdf.min.mjs, pdf.worker.min.mjs
+
+Full license text: https://github.com/mozilla/pdf.js/blob/master/LICENSE
+
+Use in Shinkansen: client-side PDF parsing for the document translation feature
+(extracting text runs, font metadata, and page bbox). No modifications were
+made to the upstream files.

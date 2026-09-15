@@ -1,0 +1,519 @@
+:root {
+  --popup-row-control-w: 140px;
+
+  /* 🎨 石板海軍珊瑚 (Slate & Coral) 核心色票 */
+  --color-slate-dark: #354B5E;
+  --color-steel-blue: #475F77;
+  --color-ivory-white: #DCDDD8;
+  --color-coral-red: #D74B4B;
+
+  /* ☀️ 白色版 (Light Slate & Coral) */
+  color-scheme: light;
+  --bg-body: #ffffff;
+  --bg-header: #f8fafb;
+  --bg-footer: #f4f6f8;
+  --bg-input: #ffffff;
+  --bg-hover: #eef2f5;
+  --border: #d0d7de;
+  --border-divider: #e8ecf0;
+  --text-main: #22313f;
+  --text-muted: #6b8296;
+  --accent-primary: #D74B4B;
+  --accent-hover: #c43f3f;
+  --accent-fg: #ffffff;
+  --btn-secondary-bg: #f4f6f8;
+  --btn-secondary-fg: #354B5E;
+  --btn-secondary-border: #475F77;
+  --btn-secondary-hover: #e2e7ec;
+  --toggle-active-bg: #D74B4B;
+  --toggle-active-fg: #ffffff;
+  --toggle-inactive-bg: #ffffff;
+  --toggle-inactive-fg: #22313f;
+  --toggle-inactive-hover: #eef2f5;
+}
+
+/* 🌙 深色版 (Dark Slate & Coral) */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-body: #1c2833;
+  --bg-header: #273746;
+  --bg-footer: #22313f;
+  --bg-input: #1a252f;
+  --bg-hover: #354B5E;
+  --border: #475F77;
+  --border-divider: #2e4154;
+  --text-main: #DCDDD8;
+  --text-muted: #9cb1c4;
+  --accent-primary: #D74B4B;
+  --accent-hover: #c43f3f;
+  --accent-fg: #ffffff;
+  --btn-secondary-bg: #273746;
+  --btn-secondary-fg: #DCDDD8;
+  --btn-secondary-border: #475F77;
+  --btn-secondary-hover: #354B5E;
+  --toggle-active-bg: #D74B4B;
+  --toggle-active-fg: #ffffff;
+  --toggle-inactive-bg: #243443;
+  --toggle-inactive-fg: #DCDDD8;
+  --toggle-inactive-hover: #354B5E;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg-body: #1c2833;
+    --bg-header: #273746;
+    --bg-footer: #22313f;
+    --bg-input: #1a252f;
+    --bg-hover: #354B5E;
+    --border: #475F77;
+    --border-divider: #2e4154;
+    --text-main: #DCDDD8;
+    --text-muted: #9cb1c4;
+    --accent-primary: #D74B4B;
+    --accent-hover: #c43f3f;
+    --accent-fg: #ffffff;
+    --btn-secondary-bg: #273746;
+    --btn-secondary-fg: #DCDDD8;
+    --btn-secondary-border: #475F77;
+    --btn-secondary-hover: #354B5E;
+    --toggle-active-bg: #D74B4B;
+    --toggle-active-fg: #ffffff;
+    --toggle-inactive-bg: #243443;
+    --toggle-inactive-fg: #DCDDD8;
+    --toggle-inactive-hover: #354B5E;
+  }
+}
+
+body {
+  width: 280px;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  color: var(--text-main);
+  background: var(--bg-body);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--bg-header);
+}
+
+header h1 { font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; color: var(--text-main); }
+header h1 .page-title-icon { width: 32px; height: 32px; flex-shrink: 0; }
+.header-right { display: flex; align-items: center; gap: 8px; }
+.theme-toggle-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-main);
+  transition: all .15s ease;
+}
+.theme-toggle-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-primary);
+}
+.version { font-size: 11px; color: var(--text-muted); text-decoration: none; }
+.version:hover { text-decoration: underline; }
+
+/* 垂直節奏收斂(v1.10.31):瀏覽器 extension popup 有 ~600px 高度上限,全展開
+   (所有設定列顯示)會逼近上限。垂直 padding / margin 均勻壓窄、水平維持 16px
+   不動(保對齊 grid)。詳見 test/regression/popup-height-cap.spec.js。 */
+main { padding: 10px 16px; }
+
+button.primary {
+  width: 100%;
+  padding: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-fg);
+  background: var(--accent-primary);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+button.primary:hover { background: var(--accent-hover); }
+
+button.secondary {
+  width: 100%;
+  padding: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--btn-secondary-fg);
+  background: var(--btn-secondary-bg);
+  border: 1px solid var(--btn-secondary-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+button.secondary:hover { background: var(--btn-secondary-hover); }
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 13px;
+}
+/* v1.6.23：同 .update-dot / .update-banner 的 hidden 覆寫修法——
+   .row 上面顯式 display:flex 覆蓋了 user agent 的 [hidden] { display: none },
+   讓 yt-subtitle-row 在非 YouTube 頁面也錯誤顯示。明確列 .row[hidden] 才能蓋住。 */
+.row[hidden] { display: none !important; }
+
+.row select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg-input);
+  color: var(--text-main);
+  width: var(--popup-row-control-w);
+}
+.row select:focus {
+  border-color: var(--accent-primary);
+  outline: none;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-height: 16px;
+}
+
+/* 未設 API Key 時狀態列可點（開設定頁）：色 + 底線雙通道標示可點 */
+.status.status-cta {
+  cursor: pointer;
+  text-decoration: underline;
+  color: var(--accent-primary);
+}
+
+footer {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-divider);
+  background: var(--bg-footer);
+  gap: 8px;
+}
+
+footer > * {
+  flex: 1 1 0;
+  text-align: center;
+  min-width: 0; /* 允許長 label 在欄內 wrap,不撐爆 grid */
+}
+
+/* iOS build（SPEC-PRIVATE §26）：translate-doc/ 已 build-time strip，
+   PDF 翻譯入口在 iOS 是死按鈕 → 隱藏。body.runtime-ios 由 popup.js 依
+   IS_IOS_BUILD（lib/distribution.js，iOS build script override 為 true）加上。
+   build 屬性 → 不論 host OS（含 iOS build 跑在 Mac）都隱藏，掛 runtime-ios。 */
+body.runtime-ios #translate-doc-btn {
+  display: none;
+}
+
+/* iOS popup 放大（sim 實測收斂結果，SPEC-PRIVATE §26.7）。
+   平台屬性 → 只在真觸控裝置（body.runtime-ios-touch，popup.js 依
+   isTouchScreenDevice() 加）放大；iOS build 跑在 macOS（無觸控）時不放大，
+   尊重桌面 popover 尺寸（見 lib/platform.js）。
+   iPad popover 寬度「跟著頁面內容寬度走」（不是固定 390pt）——固定 280px 版面
+   + zoom 1.5 → 內容視覺寬 420pt，popover 自己拉寬到 420，版面與桌面完全一致
+   不換行、字級 1.5 倍。
+   iPhone sheet 寬度固定 = 螢幕寬（依機型 390〜440pt），420 會橫向溢出 →
+   media query 降到 1.435（= 402 / 280）當 fallback；實際撐滿值由 popup.js
+   依 window.innerWidth 動態算（zoom = 寬 / 280，寫死 1.435 只在 402pt 機型
+   剛好，430 / 440pt 機型會右側留白）。media query 以 layout viewport 判：
+   iPad popover 的 device-width = popover 自身（~280）、iPhone sheet =
+   螢幕寬 ≥ 390，350 為分界。
+   高度模型（v1.10.35,對齊 JRead 實機驗證做法）：popover 寬度跟著內容走、但高度有
+   上限。舊做法（popup.js JS zoom = innerWidth/280 ≈ 1.5 + 固定 280px 窄版面）把內容
+   ×1.5 撐高,active（已翻譯：顯示原文 + 編輯譯文）狀態在 iPad mini 超過 popover 高度
+   上限 → 出捲軸（Jimmy 實機回報）。改成 JRead 那套：固定放大檔 zoom 1.35（不再 JS 算）
+   + 觸控且 viewport 已寬時 width:auto（版面比 280 寬 → 換行少、內容更矮）→ 高度落回
+   popover 上限內、寬度仍撐滿。
+   實測過的死路（沒有 min-width guard 時不要試）：
+   - width: 100% + zoom：layout viewport 被 zoom 反向壓窄,280pt popover 變 200px 版面全 wrap
+   - viewport width=280 fit-to-width：WebKit 觸發 font boosting,一樣 wrap
+   解法（JRead 同款）：width:auto 只在 @media (min-width: 350px) 內套——min-width guard
+   排除「popover 尚未定尺寸的早期窄 viewport」,避免 width:auto ↔ 視窗 sizing 互相循環 +
+   font-boosting。窄 viewport 時 fallback 回固定 280px。 */
+body.runtime-ios-touch {
+  width: 280px;
+  min-width: 0;
+  zoom: 1.35;
+}
+@media (min-width: 350px) {
+  body.runtime-ios-touch {
+    width: auto;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+}
+
+/* 觸控版 popup 垂直節奏收斂(v1.10.37 起,SPEC-PRIVATE §26):觸控版 zoom 1.35〜1.5 把
+   桌面 ~600px 上限調校過的版面整體放大,兩個情境會撐爆可見範圍:
+   (1) iPad mini 直立 popover:YouTube 頁多三列(字幕翻譯 / 雙語對照 / 字幕大小)全展開
+       撐到 ~629px,超過 popover 上限 → footer 被切(v1.10.37 首次收斂)。
+   (2) iPhone sheet:Safari 把 popup 當底部 sheet 呈現,開啟時停在較矮的 detent(可手動
+       上拉,但 footer 在摺線下)。已翻譯 active 狀態(顯示原文 + 編輯譯文 + 累計列)在
+       zoom ~1.5 下高度超出開啟 detent 約一個 footer → 底部「設定 / 快速切換」看不到
+       (Jimmy 實機回報)。iPhone sheet 的 detent 高度 / 開啟位置由 Safari 決定,網頁端
+       無法控制(查證:Apple 開發者論壇多 thread + WWDC,iOS 無 web extension popup 的
+       sheet detent API)→ 唯一能做的是把版面壓矮,讓內容落進開啟 detent 內。
+   修法:只壓 runtime-ios-touch 的垂直節奏(margin / padding),不動字級(zoom / --sk-fz
+   保留 → 可讀性不變),水平 16px 不動(保對齊 grid,CLAUDE.md §1)。iPad popover 會跟著
+   內容縮(sized-to-content)→ 一起更緊湊、無副作用。量測(@1.35):iPad YT 629→~498px、
+   iPhone active 457→~417px(各 recover 一個 footer 以上)。桌面 / 非觸控走原節奏不受影響。 */
+body.runtime-ios-touch header { padding-top: 5px; padding-bottom: 5px; }
+body.runtime-ios-touch main { padding-top: 6px; padding-bottom: 6px; }
+body.runtime-ios-touch button.primary { padding: 6px; }
+body.runtime-ios-touch button.secondary { margin-top: 4px; padding: 6px; }
+body.runtime-ios-touch .row,
+body.runtime-ios-touch .display-mode-row { margin-top: 4px; }
+body.runtime-ios-touch .cache-row { margin-top: 4px; padding-top: 4px; }
+body.runtime-ios-touch .status { margin-top: 3px; }
+body.runtime-ios-touch footer { padding-top: 5px; padding-bottom: 5px; }
+
+/* iPad 字體放大（SPEC-PRIVATE §26.10）：大 iPad（12.9"）跟 iPad mini 共用同一個
+   popover 尺寸（都 ~420pt），但大螢幕檢視距離較遠 → 字看起來偏小。zoom 是整體
+   縮放、改不了「字相對箱子」的比例,故另用 --sk-fz（popup.js 依螢幕短邊設：iPad
+   mini → 1 不變、12.9" → ~1.35）只放大可讀文字,popup 箱子尺寸（zoom）不動。
+   寬度受限的 mode 切換鈕（.mode-btn,140px 內塞兩顆）刻意不套,避免文字溢出。
+   --sk-fz 預設 1 → 桌面 / iPhone / iPad mini 維持原字級。 */
+body.runtime-ios-touch header h1 { font-size: calc(16px * var(--sk-fz, 1)); }
+body.runtime-ios-touch .version { font-size: calc(11px * var(--sk-fz, 1)); }
+body.runtime-ios-touch button.primary { font-size: calc(14px * var(--sk-fz, 1)); }
+body.runtime-ios-touch button.secondary { font-size: calc(13px * var(--sk-fz, 1)); }
+body.runtime-ios-touch .row { font-size: calc(13px * var(--sk-fz, 1)); }
+body.runtime-ios-touch .row select { font-size: calc(12px * var(--sk-fz, 1)); }
+body.runtime-ios-touch .display-mode-row { font-size: calc(13px * var(--sk-fz, 1)); }
+body.runtime-ios-touch .status { font-size: calc(12px * var(--sk-fz, 1)); }
+body.runtime-ios-touch .cache-row { font-size: calc(12px * var(--sk-fz, 1)); }
+body.runtime-ios-touch .cache-info { font-size: calc(11px * var(--sk-fz, 1)); }
+body.runtime-ios-touch button.link { font-size: calc(12px * var(--sk-fz, 1)); }
+body.runtime-ios-touch button.link.small { font-size: calc(12px * var(--sk-fz, 1)); }
+body.runtime-ios-touch .hint { font-size: calc(11px * var(--sk-fz, 1)); }
+
+button.link {
+  background: none;
+  border: 0;
+  color: var(--accent-primary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+button.link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.hint { font-size: 11px; color: var(--text-muted); }
+
+/* v1.5.0: 顯示模式切換 */
+.display-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.display-mode-label {
+  color: var(--text-main);
+}
+.display-mode-toggle {
+  display: flex;
+  box-sizing: border-box;
+  width: var(--popup-row-control-w);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.mode-btn {
+  flex: 1;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--toggle-inactive-bg);
+  color: var(--toggle-inactive-fg);
+  border: 0;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.mode-btn + .mode-btn {
+  border-left: 1px solid var(--border);
+}
+.mode-btn[aria-checked="true"] {
+  background: var(--toggle-active-bg);
+  color: var(--toggle-active-fg);
+}
+.mode-btn:hover:not([aria-checked="true"]) {
+  background: var(--toggle-inactive-hover);
+}
+
+.cache-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-divider);
+  font-size: 12px;
+}
+.cache-info { color: var(--text-muted); font-size: 11px; }
+button.link.small { font-size: 12px; }
+button.link.small:hover { text-decoration: underline; }
+
+/* v1.8.41：清除快取 inline 確認列。Firefox 的 popup 內 confirm() native dialog
+   會被 popup 視窗寬度卡住、按鈕看不到，改用 inline 確認 UI 兩個瀏覽器都一致。
+   用 :not([hidden]) 而非裸 selector，避免 display: inline-flex 蓋掉 [hidden] 的 display:none。 */
+.clear-cache-confirm:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #86868b;
+  /* v2.0.71:確認列(「確定清除？／歸零？」+ 是/否)不可換行——flex 擠壓時 CJK
+     短語會被拆成直式(iOS 觸控版字級放大時實測)。空間不足由 .cache-info 截斷讓位 */
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+/* 確認列展開時左側資訊文字讓位:可縮 + 省略號,不推擠確認列換行 */
+.cache-info {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clear-cache-danger { color: #ff3b30; font-weight: 600; }
+
+/* v1.6.1: 更新提示 */
+.update-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3b30;
+  margin-left: 6px;
+  vertical-align: super;
+  font-size: 0;
+}
+/* v1.6.23: 同 .update-banner 的 hidden 覆寫修法——上面 .update-dot 顯式
+   display:inline-block 會覆蓋 user agent 的 [hidden] { display: none } 規則，
+   讓 hidden=true 的紅點仍渲染。明確列 .update-dot[hidden] 才能蓋住。 */
+.update-dot[hidden] { display: none !important; }
+.update-banner {
+  /* v1.6.3: 從 <a> 改 <button>——加 button reset 維持 banner 視覺 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: #fff8e1;
+  border: 1px solid #f5b800;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #2c2a1f;
+  text-decoration: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.update-banner:hover { background: #fff3c4; }
+.update-banner strong { color: #1d1d1f; }
+.update-banner span { color: #6e6e73; }
+/* v1.6.5: 強制覆寫 hidden attribute——上方 display:flex 會 override 掉 user-agent
+   stylesheet 的 [hidden] { display: none }，造成 hidden=true 仍顯示的 bug。 */
+.update-banner[hidden] { display: none !important; }
+
+/* v1.6.5: 剛升級綠色 welcome banner（CWS 自動更新後顯示一次） */
+/* iOS / iPadOS 上架提示(整條可點,× 永久關閉;iOS build 由 popup.js 隱藏) */
+.ios-promo-banner {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 8px;
+  background: var(--accent-primary);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ios-promo-banner:hover { background: var(--accent-hover); }
+/* display: flex 會 override user-agent 的 [hidden] { display: none }(同 .update-banner 的坑) */
+.ios-promo-banner[hidden] { display: none !important; }
+.ios-promo-link {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 9px 4px 9px 12px;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-decoration: none;
+}
+.ios-promo-dismiss {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #fff;
+  opacity: .75;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 10px;
+  cursor: pointer;
+}
+.ios-promo-dismiss:hover { opacity: 1; }
+
+.welcome-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: #ecfdf3;
+  border: 1px solid #b6efc9;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #1d3a26;
+}
+.welcome-banner strong { color: #117a3e; font-size: 13px; }
+.welcome-banner-subtitle {
+  margin: 2px 0 0;
+  color: #1d3a26;
+  font-size: 11px;
+}
+.welcome-bullets {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.welcome-bullets li { color: #2c2a1f; line-height: 1.4; }
+.welcome-bullets strong { color: #1d1d1f; font-size: inherit; }
+.welcome-banner-dismiss {
+  align-self: flex-end;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid #b6efc9;
+  border-radius: 5px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #117a3e;
+  font-family: inherit;
+  cursor: pointer;
+}
+.welcome-banner-dismiss:hover { background: #f0fdf4; }
+/* v1.6.5: 同 .update-banner 的 hidden 覆寫修法 */
+.welcome-banner[hidden] { display: none !important; }

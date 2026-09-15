@@ -1,0 +1,34 @@
+/* content.css — Shinkansen
+ * 譯文以「原地替換」方式寫入原本的元素，完全繼承網站既有樣式，
+ * 因此不需要任何 .shinkansen-translation 區塊樣式。
+ * 本檔保留給未來可能的全域樣式微調使用（例如 Toast host 定位）。
+ */
+
+/* v1.0.3: 編輯譯文模式 — 淡色虛線框標示可編輯區塊 */
+.shinkansen-editable {
+  outline: 1.5px dashed rgba(215, 75, 75, 0.4) !important;
+  outline-offset: 2px;
+  border-radius: 3px;
+  cursor: text;
+}
+.shinkansen-editable:focus {
+  outline-color: rgba(215, 75, 75, 0.7) !important;
+}
+
+/* v1.0.22: grid cell 翻譯排版修正 —— 序列化→注入過程中佔位符重建
+ * 可能產生 <br>，在 ARIA grid 的單行排版裡會撐破行高。
+ * 隱藏 <br> 讓文字維持同一行，由原本的 overflow:hidden + text-overflow:ellipsis 截斷。 */
+table[role="grid"] [data-shinkansen-translated] br {
+  display: none !important;
+}
+
+/* v1.2.22: preserveLineBreaks — 合併多行字幕後，第二個（空字串）segment 的父容器
+ * 仍有 ~12px 殘餘高度，造成字幕下方出現可見空白行。
+ * 直接隱藏空的 .ytp-caption-segment 及其父 span 解決。 */
+.ytp-caption-segment:empty {
+  display: none !important;
+}
+.ytp-caption-segment:empty + span,
+span:has(> .ytp-caption-segment:empty) {
+  display: none !important;
+}

@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="doc.title">翻譯文件 — Shinkansen</title>
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>
+      <img src="../icons/icon-128.png" alt="" class="app-icon">
+      <span data-i18n="doc.header">翻譯文件（beta）</span>
+    </h1>
+  </header>
+
+  <main id="app-main">
+    <!-- 階段 1：上傳 -->
+    <section id="stage-upload" class="stage">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="拖放或選取文件" data-i18n-attr-aria-label="doc.upload.aria">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-title" data-i18n="doc.upload.dropzone.title">拖放文件至此</div>
+        <div class="dropzone-hint" data-i18n="doc.upload.dropzone.hint">或點擊選取檔案</div>
+        <input type="file" id="file-input" accept="application/pdf,.pdf,application/epub+zip,.epub,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,text/plain,.md,.markdown,text/markdown,.htm,.html,text/html,.srt,application/x-subrip,.vtt,text/vtt,.ass,.ssa" hidden>
+      </div>
+
+      <div class="constraints">
+        <div class="constraint-item">
+          <span class="constraint-label" data-i18n="doc.upload.constraint.label">支援上限</span>
+          <span class="constraint-value" data-i18n="doc.upload.constraint.value">PDF 300 頁 / 50 MB・EPUB / Word / TXT / Markdown / HTML / 字幕檔 100 MB</span>
+        </div>
+      </div>
+
+      <div class="privacy-note">
+        <div class="privacy-note-title" data-i18n="doc.upload.privacy.title">文件不離開你的瀏覽器</div>
+        <div class="privacy-note-detail" data-i18n="doc.upload.privacy.detail">整份文件全程在本機解析，不會上傳任何雲端、伺服器或第三方服務。只有擷取出來的純文字會送往你自己設定的 Gemini API 進行翻譯</div>
+      </div>
+
+      <div id="upload-error" class="error-banner" hidden></div>
+    </section>
+
+    <!-- 階段 2：解析（W1 階段先停在這——印 text run dump 到 console） -->
+    <section id="stage-parsing" class="stage" hidden>
+      <div class="parsing-status">
+        <div class="spinner-ring" aria-hidden="true"></div>
+        <div class="parsing-text">
+          <div id="parsing-title" class="parsing-title" data-i18n="doc.parsing.title">解析文件中</div>
+          <div id="parsing-detail" class="parsing-detail" data-i18n="doc.parsing.detail.fileStruct">讀取檔案結構…</div>
+        </div>
+      </div>
+      <button id="cancel-btn" class="secondary-btn" type="button" data-i18n="doc.parsing.btn.cancel">取消</button>
+    </section>
+
+    <!-- 階段 3：解析完成 dump（W2 暫用——展示版面 IR 摘要） -->
+    <section id="stage-result" class="stage" hidden>
+      <h2 class="result-title" data-i18n="doc.result.title">解析完成</h2>
+      <div class="result-summary">
+        <div class="result-row"><span data-i18n="doc.result.row.filename">檔名</span><span id="result-filename"></span></div>
+        <div class="result-row"><span data-i18n="doc.result.row.pages">頁數</span><span id="result-pages"></span></div>
+        <div class="result-row"><span data-i18n="doc.result.row.chars">文件字數</span><span id="result-chars"></span></div>
+        <!-- 翻譯頁數範圍：解析後才知道總頁數，故 min / max / 預設值在 showResult 時填。
+             只影響「送去翻譯的頁」，閱讀器與下載仍是完整文件（範圍外的頁維持原文） -->
+        <div class="result-row" id="result-range-row">
+          <span data-i18n="doc.result.row.pageRange">翻譯頁數</span>
+          <span class="page-range">
+            <input type="number" id="page-range-from" class="page-range-input" min="1" step="1" data-i18n-attr-aria-label="doc.result.pageRange.from" aria-label="起始頁">
+            <span class="page-range-sep">–</span>
+            <input type="number" id="page-range-to" class="page-range-input" min="1" step="1" data-i18n-attr-aria-label="doc.result.pageRange.to" aria-label="結束頁">
+            <button id="page-range-all-btn" class="page-range-all-btn" type="button" data-i18n="doc.result.pageRange.all">全部</button>
+          </span>
+        </div>
+      </div>
+      <div id="result-error" class="error-banner" hidden></div>
+      <div class="result-actions">
+        <button id="translate-btn" class="primary-btn" type="button" data-i18n="doc.result.btn.translate">開始翻譯</button>
+        <button id="extract-glossary-btn" class="secondary-btn" type="button" title="先用 AI 抽出文章內專有名詞 / 人名對照表，編輯確認後再翻譯，確保譯名前後一致" data-i18n="doc.result.btn.glossary" data-i18n-attr-title="doc.result.btn.glossary.title">先建立文章術語表</button>
+        <button id="result-settings-btn" class="secondary-btn" type="button" title="選擇翻譯用的 preset 模型" data-i18n="doc.result.btn.settings" data-i18n-attr-title="doc.result.btn.settings.title">翻譯設定</button>
+        <button id="reupload-btn" class="secondary-btn" type="button" data-i18n="doc.result.btn.reupload">重新上傳</button>
+      </div>
+    </section>
+
+    <!-- EPUB 階段 3：章節清單（選翻 + 試翻 review，v2.0.11） -->
+    <section id="stage-chapters" class="stage" hidden>
+      <h2 class="result-title" id="chapters-book-title"></h2>
+      <div class="result-summary">
+        <div class="result-row" id="chapters-author-row"><span data-i18n="doc.epub.row.author">作者</span><span id="chapters-author"></span></div>
+        <div class="result-row"><span data-i18n="doc.epub.row.version">格式</span><span id="chapters-epub-version"></span></div>
+        <div class="result-row" id="chapters-count-row"><span data-i18n="doc.epub.row.chapters">章節數</span><span id="chapters-count"></span></div>
+        <div class="result-row"><span data-i18n="doc.epub.row.chars">可翻譯字數</span><span id="chapters-chars"></span></div>
+        <div class="result-row"><span data-i18n="doc.epub.row.selected">已勾選</span><span id="chapters-selected-summary"></span></div>
+        <div class="result-row" id="chapters-cumulative-row" hidden><span id="chapters-cumulative-label" data-i18n="doc.epub.row.cumulativeCost">本書累計費用</span><span id="chapters-cumulative-cost"></span></div>
+      </div>
+      <div id="chapters-error" class="error-banner" hidden></div>
+      <button id="chapters-scan-btn" class="scan-findings-btn" type="button" hidden></button>
+      <div class="chapters-select-actions">
+        <button id="chapters-select-all-btn" class="secondary-btn" type="button" data-i18n="doc.epub.btn.selectAll">全選</button>
+        <button id="chapters-select-none-btn" class="secondary-btn" type="button" data-i18n="doc.epub.btn.selectNone">全不選</button>
+        <button id="chapters-exclude-matter-btn" class="secondary-btn" type="button" title="排除封面、目錄、版權頁等附屬頁" data-i18n="doc.epub.btn.excludeMatter" data-i18n-attr-title="doc.epub.btn.excludeMatter.title">排除附屬頁</button>
+      </div>
+      <div id="chapters-list" class="chapters-list"></div>
+      <div class="result-actions">
+        <button id="chapters-translate-btn" class="primary-btn" type="button" data-i18n="doc.epub.btn.translateSelected">翻譯勾選章節</button>
+        <button id="chapters-glossary-btn" class="secondary-btn" type="button" title="逐章掃描全書、抽出人名 / 地名 / 術語對照表，編輯鎖定後翻譯，確保譯名跨章節一致" data-i18n="doc.epub.btn.glossary" data-i18n-attr-title="doc.epub.btn.glossary.title">先建立全書術語表</button>
+        <button id="chapters-preview-all-btn" class="secondary-btn" type="button" hidden data-i18n="doc.epub.btn.previewAll">全書預覽</button>
+        <button id="chapters-download-btn" class="secondary-btn" type="button" hidden data-i18n="doc.epub.btn.download">下載譯本 EPUB</button>
+        <label id="epub-dual-wrap" class="epub-output-format" hidden title="單語譯文：譯文取代原文。雙語對照：原文段落保留（縮小顯示），譯文接在每段後面，適合對照閱讀或語言學習" data-i18n-attr-title="doc.epub.dual.title">
+          <span id="epub-dual-label" data-i18n="doc.epub.dual.label">譯本內容</span>
+          <select id="epub-dual-mode">
+            <option value="single" id="epub-dual-opt-single" data-i18n="doc.epub.dual.single">單語譯文</option>
+            <option value="dual" id="epub-dual-opt-dual" data-i18n="doc.epub.dual.dual">雙語對照</option>
+          </select>
+        </label>
+        <label id="epub-output-format-wrap" class="epub-output-format" hidden>
+          <span data-i18n="doc.epub.outputFormat.label">輸出格式</span>
+          <select id="epub-output-format">
+            <option value="original" data-i18n="doc.epub.outputFormat.original">原檔版本</option>
+            <option value="epub3" data-i18n="doc.epub.outputFormat.epub3">EPUB 3</option>
+          </select>
+        </label>
+        <button id="chapters-export-session-btn" class="secondary-btn" type="button" hidden title="把翻譯進度、術語表、本書禁用詞存成 JSON 檔備份或搬到別台裝置" data-i18n="doc.epub.btn.exportSession" data-i18n-attr-title="doc.epub.btn.exportSession.title">匯出工作階段</button>
+        <button id="chapters-import-session-btn" class="secondary-btn" type="button" title="從 JSON 檔還原這本書的翻譯進度（會取代目前進度）" data-i18n="doc.epub.btn.importSession" data-i18n-attr-title="doc.epub.btn.importSession.title">匯入工作階段</button>
+        <button id="chapters-settings-btn" class="secondary-btn" type="button" data-i18n="doc.result.btn.settings">翻譯設定</button>
+        <button id="chapters-reupload-btn" class="secondary-btn" type="button" data-i18n="doc.result.btn.reupload">重新上傳</button>
+        <button id="chapters-discard-btn" class="secondary-btn chapters-discard-btn" type="button" hidden title="清掉這本書全部的翻譯資料：進度、手動編輯、翻譯快取、術語表、本書禁用詞，並回到選取檔案畫面。想留備份請先「匯出工作階段」" data-i18n="doc.epub.btn.discard" data-i18n-attr-title="doc.epub.btn.discard.title">放棄本書翻譯</button>
+      </div>
+      <input type="file" id="epub-session-import-file" accept="application/json,.json" hidden>
+    </section>
+
+    <!-- EPUB 階段 5：單章譯文預覽（試翻 review 用） -->
+    <section id="stage-epub-preview" class="stage" hidden>
+      <!-- 長書預覽捲到中段仍要能返回 / 搜尋取代（2026-07-11 Jimmy 需求）：
+           工具列 + 標題 + 搜尋取代列整組縮小並 sticky 凍結頁面頂端。
+           標題維持獨立一行（2026-07-10 Jimmy 回報不與返回按鈕擠同列） -->
+      <div class="epub-preview-sticky">
+        <div class="epub-preview-toolbar">
+          <button id="epub-preview-back-btn" class="secondary-btn" type="button" data-i18n="doc.epub.btn.previewBack">← 返回章節清單</button>
+          <span class="edit-toolbar-spacer"></span>
+          <label class="g-opt">
+            <input type="checkbox" id="epub-preview-compare">
+            <span data-i18n="doc.epub.preview.compare">顯示原文對照</span>
+          </label>
+        </div>
+        <h2 class="result-title" id="epub-preview-title"></h2>
+        <div class="epub-sr-bar">
+          <input type="text" id="epub-sr-find" data-i18n-attr-placeholder="doc.epub.sr.find" placeholder="搜尋譯文…">
+          <input type="text" id="epub-sr-replace" data-i18n-attr-placeholder="doc.epub.sr.replace" placeholder="取代為…">
+          <button id="epub-sr-apply" class="secondary-btn" type="button" data-i18n="doc.epub.sr.apply">全部取代</button>
+          <span id="epub-sr-status" class="settings-hint"></span>
+        </div>
+      </div>
+      <div class="edit-help" id="epub-preview-edit-help" data-i18n="doc.epub.preview.editHint">已翻譯的段落可直接點擊編輯，修改會即時存入譯本；重新翻譯該章會覆蓋手動修改</div>
+      <div id="epub-preview-content" class="epub-preview-content"></div>
+    </section>
+
+    <!-- EPUB 階段 6：譯後一致性掃描結果（v2.0.11） -->
+    <section id="stage-scan" class="stage" hidden>
+      <!-- 動作列凍結頂端（2026-07-11 Jimmy 需求,同全書預覽 sticky pattern）：
+           長清單捲到中段仍能重新掃描 / 返回,標題與按鈕同列縮小 -->
+      <div class="epub-preview-sticky scan-sticky">
+        <div class="epub-preview-toolbar">
+          <h2 class="result-title scan-sticky-title" data-i18n="doc.epub.scan.title">譯名一致性掃描</h2>
+          <span class="edit-toolbar-spacer"></span>
+          <button id="scan-rescan-btn" class="secondary-btn" type="button" data-i18n="doc.epub.scan.rescan">重新掃描</button>
+          <button id="scan-back-btn" class="secondary-btn" type="button" data-i18n="doc.epub.scan.back">← 返回章節清單</button>
+        </div>
+      </div>
+      <div id="scan-empty" class="scan-empty" data-i18n="doc.epub.scan.empty" hidden>沒有發現一致性問題</div>
+      <div id="scan-drift-wrap" hidden>
+        <h3 class="scan-section-title" data-i18n="doc.epub.scan.drift.title">同一原文多種譯名</h3>
+        <p class="scan-hint" data-i18n="doc.epub.scan.drift.hint">選定要統一的譯名後按「套用」：其他譯名會在含該原文的段落中被取代，並回填全書術語表</p>
+        <div id="scan-drift-list"></div>
+      </div>
+      <div id="scan-compliance-wrap" hidden>
+        <h3 class="scan-section-title" data-i18n="doc.epub.scan.compliance.title">術語表未遵守</h3>
+        <p class="scan-hint" data-i18n="doc.epub.scan.compliance.hint">以下段落的譯文找不到術語表指定的譯名。可在「全書預覽」用搜尋取代修正</p>
+        <div id="scan-compliance-list"></div>
+      </div>
+    </section>
+
+    <!-- 階段 4.5：翻譯中（W3） -->
+    <section id="stage-translating" class="stage" hidden>
+      <div class="translating-header">
+        <div class="spinner-ring spinner-ring--sm" aria-hidden="true"></div>
+        <h2 class="result-title" style="margin:0" data-i18n="doc.translating.title">翻譯中</h2>
+      </div>
+      <div class="translate-progress-wrap">
+        <div class="translate-progress-bar"><div id="translate-progress-fill" class="translate-progress-fill"></div></div>
+        <div class="translate-progress-meta">
+          <span id="translate-progress-count">0 / 0</span>
+          <span id="translate-progress-eta"></span>
+          <span id="translate-progress-cost"></span>
+        </div>
+        <div id="translate-progress-failed" class="translate-progress-failed" hidden></div>
+      </div>
+      <div class="result-actions">
+        <button id="translate-cancel-btn" class="secondary-btn" type="button" data-i18n="doc.translating.btn.cancel">取消</button>
+      </div>
+    </section>
+
+    <!-- 翻譯設定 modal（stage-result / reader-toolbar 各一個按鈕都開這個） -->
+    <dialog id="translate-settings-dialog" class="summary-dialog">
+      <h2 class="result-title" data-i18n="doc.settings.title">翻譯設定</h2>
+      <div class="settings-section">
+        <div class="settings-label" data-i18n="doc.settings.label.preset">使用哪組預設</div>
+        <div id="settings-preset-list" class="settings-preset-list"></div>
+        <p class="settings-hint" data-i18n="doc.settings.hint.preset">三組預設的引擎、模型、標籤在「設定 → 翻譯快速鍵」分頁自訂</p>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label" data-i18n="doc.settings.label.batchSize">每批段數</div>
+        <input type="number" id="settings-doc-batch-size" min="1" max="100" step="1" class="settings-batch-input">
+        <p class="settings-hint" data-i18n="doc.settings.hint.batchSize">每次 AI 請求包含的段落數（1-100，預設 50）。段數大 = 請求少、prompt 開銷省；段數小 = 單一請求失敗影響範圍小。只影響文件翻譯，網頁與字幕翻譯不受影響</p>
+      </div>
+      <!-- 本文件額外翻譯指令（per-document，2026-07-27）：附加在文件翻譯 system prompt 之後；
+           EPUB 隨工作階段持久化並進「匯出工作階段」JSON -->
+      <div class="settings-section">
+        <div class="settings-label" data-i18n="doc.settings.label.extraPrompt">本文件額外翻譯指令</div>
+        <textarea id="settings-doc-extra-prompt" rows="3" class="settings-extra-prompt"></textarea>
+        <p class="settings-hint" data-i18n="doc.settings.hint.extraPrompt">只套用在目前這份文件的補充指令，會附加在「文件翻譯設定」的翻譯指令之後——例如「這是十九世紀小說，語氣請古典一點」。EPUB 會隨工作階段儲存，並跟著「匯出工作階段」一起帶走；改動後重翻會重新呼叫 AI（不會用舊的翻譯記憶）</p>
+      </div>
+      <div class="settings-section">
+        <label class="g-opt">
+          <input type="checkbox" id="settings-epub-paragraph-spacing">
+          <span data-i18n="doc.settings.label.paragraphSpacing">段落間距至少 0.5em</span>
+        </label>
+        <p class="settings-hint" data-i18n="doc.settings.hint.paragraphSpacing">原書排版段落擠成一團時開啟：譯本章節會注入 0.5em 段落間距。原書本身有段距的不需要開。只影響下載的譯本 EPUB</p>
+      </div>
+      <div class="settings-section">
+        <label class="g-opt">
+          <input type="checkbox" id="settings-epub-autofix-spacing">
+          <span data-i18n="doc.settings.label.autoFixSpacing">譯文空格自動校正</span>
+        </label>
+        <p class="settings-hint" data-i18n="doc.settings.hint.autoFixSpacing">開啟預覽或下載譯本 EPUB 時自動校正譯文空格：補上中文與英數字之間缺漏的空格、移除全形標點符號與中英文之間多餘的空格。只在翻譯目標為中文時執行</p>
+      </div>
+      <div class="settings-section">
+        <label class="g-opt">
+          <input type="checkbox" id="settings-subtitle-strip-period">
+          <span data-i18n="doc.settings.label.subtitleStripPeriod">字幕句末不加句號</span>
+        </label>
+        <p class="settings-hint" data-i18n="doc.settings.hint.subtitleStripPeriod">字幕檔譯文的每則結尾去掉「。」（問號、驚嘆號保留），與 YouTube 字幕翻譯一致；預覽與下載都套用，關閉即回到 AI 原始輸出。只在翻譯目標為中文時執行</p>
+      </div>
+      <div class="settings-section">
+        <label class="g-opt">
+          <input type="checkbox" id="settings-epub-consistency-scan">
+          <span data-i18n="doc.settings.label.consistencyScan">譯後一致性掃描</span>
+        </label>
+        <p class="settings-hint" data-i18n="doc.settings.hint.consistencyScan">每輪翻譯完成後自動掃描譯名一致性：術語表符合度（免費）＋同一原文多譯名偵測（用術語表模型，少量費用計入本書累計費用）</p>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label" data-i18n="doc.settings.label.docCache">本篇翻譯記憶</div>
+        <button id="settings-clear-doc-cache-btn" class="secondary-btn" type="button" data-i18n="doc.settings.btn.clearDocCache">清除本篇翻譯記憶</button>
+        <span id="settings-clear-doc-cache-status" class="settings-hint" style="margin-left:8px"></span>
+        <p class="settings-hint" data-i18n="doc.settings.hint.docCache">只清掉這份文件的翻譯記憶（其他文件 / 網頁 / 字幕不影響）。清除後下次翻這份會重新呼叫 AI 翻譯。適合「覺得譯文有錯想重來」「想換個翻譯指令重試」的情境</p>
+      </div>
+      <!-- W7：深設定（翻譯指令 / 預設選項 / 清除所有文件翻譯記憶）在獨立 page，不擠進 modal -->
+      <div class="settings-section">
+        <button id="settings-open-doc-options-btn" class="secondary-btn" type="button" data-i18n="doc.settings.btn.openOptions">進階設定 →</button>
+        <p class="settings-hint" data-i18n="doc.settings.hint.openOptions">開啟「文件翻譯設定」分頁，可自訂翻譯指令、調整預設選項、清除翻譯記憶</p>
+      </div>
+      <div class="result-actions">
+        <button id="translate-settings-save-btn" class="primary-btn" type="button" data-i18n="doc.settings.btn.save">儲存</button>
+        <button id="translate-settings-cancel-btn" class="secondary-btn" type="button" data-i18n="doc.settings.btn.cancel">取消</button>
+      </div>
+    </dialog>
+
+    <!-- 翻譯紀錄 modal（從工具欄「翻譯紀錄」按鈕開啟） -->
+    <dialog id="translate-summary-dialog" class="summary-dialog">
+      <h2 class="result-title" data-i18n="doc.summary.title">翻譯紀錄</h2>
+      <div class="result-summary">
+        <div class="result-row"><span data-i18n="doc.summary.row.filename">檔名</span><span id="translated-filename"></span></div>
+        <div class="result-row"><span data-i18n="doc.summary.row.translated">已翻譯段落</span><span id="translated-count"></span></div>
+        <div class="result-row"><span data-i18n="doc.summary.row.failed">翻譯失敗</span><span id="translated-failed"></span></div>
+        <div class="result-row"><span data-i18n="doc.summary.row.cacheHits">快取命中</span><span id="translated-cache-hits"></span></div>
+        <div class="result-row"><span data-i18n="doc.summary.row.inputTokens">輸入 token</span><span id="translated-input-tokens"></span></div>
+        <div class="result-row"><span data-i18n="doc.summary.row.outputTokens">輸出 token</span><span id="translated-output-tokens"></span></div>
+        <div class="result-row"><span data-i18n="doc.summary.row.cost">累計費用</span><span id="translated-cost"></span></div>
+      </div>
+      <div class="result-actions">
+        <button id="summary-retry-btn" class="secondary-btn" type="button" hidden title="重試所有翻譯失敗的段落" data-i18n="doc.summary.btn.retry" data-i18n-attr-title="doc.summary.btn.retry.title">重試失敗段落</button>
+        <button id="translate-summary-overlay-btn" class="secondary-btn" type="button" data-i18n="doc.summary.btn.overlay">查看版面結構</button>
+        <button id="translate-summary-close-btn" class="secondary-btn" type="button" data-i18n="doc.summary.btn.close">關閉</button>
+      </div>
+    </dialog>
+
+    <!-- 術語表匯入 modal：現有表非空時三選（合併 / 覆蓋 / 取消）。合併是系列作
+         續集沿用前作譯名的主路徑（原文相同以匯入為準、本集新抽取條目保留） -->
+    <dialog id="glossary-import-dialog" class="summary-dialog">
+      <h2 class="result-title" data-i18n="doc.glossary.import.title">匯入術語表</h2>
+      <p id="glossary-import-desc" class="settings-hint"></p>
+      <p class="settings-hint" data-i18n="doc.glossary.import.hint">合併：原文相同時以匯入的譯名為準，其餘條目全部保留（適合系列作沿用前作譯名）。覆蓋：丟棄現有內容，只留匯入條目</p>
+      <div class="result-actions">
+        <button id="glossary-import-merge-btn" class="primary-btn" type="button" data-i18n="doc.glossary.import.btn.merge">合併</button>
+        <button id="glossary-import-overwrite-btn" class="secondary-btn" type="button" data-i18n="doc.glossary.import.btn.overwrite">覆蓋</button>
+        <button id="glossary-import-cancel-btn" class="secondary-btn" type="button" data-i18n="doc.glossary.btn.cancel">取消</button>
+      </div>
+    </dialog>
+
+    <!-- 階段 6：雙頁並排閱讀器（W4） -->
+    <section id="stage-reader" class="stage" hidden>
+      <div class="reader-toolbar">
+        <span class="reader-toolbar-spacer"></span>
+        <span class="reader-zoom-group" title="調整顯示大小（50%-200%，用 CSS 縮放，canvas 解析度不變）" data-i18n-attr-title="doc.reader.zoom.title">
+          <button id="reader-zoom-out" class="secondary-btn" type="button">−</button>
+          <span id="reader-zoom-level" class="reader-zoom-level">100%</span>
+          <button id="reader-zoom-in" class="secondary-btn" type="button">+</button>
+        </span>
+        <label class="debug-toolbar-toggle" title="關閉後左右欄各自獨立捲動，不互相同步" data-i18n-attr-title="doc.reader.sync.title">
+          <input type="checkbox" id="reader-sync-toggle" checked>
+          <span data-i18n="doc.reader.sync.label">同步捲動</span>
+        </label>
+        <button id="reader-edit-btn" class="secondary-btn" type="button" title="逐段編輯譯文（支援 markdown 標記），儲存後重新產生雙頁預覽" data-i18n="doc.reader.btn.edit" data-i18n-attr-title="doc.reader.btn.edit.title">編輯譯文</button>
+        <button id="reader-copy-btn" class="secondary-btn" type="button" title="複製整份譯文純文字到剪貼簿" data-i18n="doc.reader.btn.copy" data-i18n-attr-title="doc.reader.btn.copy.title">複製譯文</button>
+        <button id="reader-summary-btn" class="secondary-btn" type="button" title="查看翻譯紀錄（已翻段數 / 失敗 / 快取命中 / token / 費用）+ 開啟版面 overlay" data-i18n="doc.reader.btn.summary" data-i18n-attr-title="doc.reader.btn.summary.title">翻譯紀錄</button>
+        <button id="reader-settings-btn" class="secondary-btn" type="button" title="選擇翻譯用的 preset 模型" data-i18n="doc.reader.btn.settings" data-i18n-attr-title="doc.reader.btn.settings.title">翻譯設定</button>
+        <button id="reader-reupload-btn" class="secondary-btn" type="button" data-i18n="doc.reader.btn.reupload">重新上傳</button>
+        <span class="reader-toolbar-spacer"></span>
+        <button id="reader-download-pdf-btn" class="primary-btn" type="button" title="下載譯文 PDF（保留原版面與圖片，譯文就地覆蓋原文）" data-i18n="doc.reader.btn.download" data-i18n-attr-title="doc.reader.btn.download.title">下載譯文</button>
+      </div>
+      <!-- 翻譯整體失敗（translateDocument throw）的原因顯示；鏡像 EPUB 的 chapters-error -->
+      <div id="reader-error" class="error-banner" hidden></div>
+      <div class="reader-grid">
+        <div class="reader-col reader-col-original" id="reader-col-original"></div>
+        <div class="reader-col reader-col-translated" id="reader-col-translated"></div>
+      </div>
+    </section>
+
+    <!-- 階段 5：譯文編輯（v1.8.49）——逐段編輯譯文，儲存後重新產生雙頁預覽 -->
+    <section id="stage-edit" class="stage" hidden>
+      <div class="edit-toolbar">
+        <span class="edit-toolbar-title" data-i18n="doc.edit.title">編輯譯文</span>
+        <button id="edit-glossary-btn" class="secondary-btn" type="button" title="編輯文章術語表（沒建過會先自動抽取），編輯後會用新術語表重新翻譯整份文件" data-i18n="doc.edit.btn.glossary" data-i18n-attr-title="doc.edit.btn.glossary.title">編輯文章術語表並重新翻譯</button>
+        <span class="edit-toolbar-spacer"></span>
+        <button id="edit-cancel-btn" class="secondary-btn" type="button" data-i18n="doc.edit.btn.cancel">取消</button>
+        <button id="edit-save-btn" class="primary-btn" type="button" data-i18n="doc.edit.btn.save">儲存並重新產生文件</button>
+      </div>
+      <div id="edit-find-bar" class="edit-find-bar" hidden>
+        <input type="text" id="edit-find-input" class="edit-find-input" placeholder="搜尋譯文" data-i18n-attr-placeholder="doc.edit.find.placeholder">
+        <span id="edit-find-count" class="edit-find-count">0 / 0</span>
+        <button id="edit-find-prev-btn" class="secondary-btn" type="button" title="上一個 (Shift+Enter)" data-i18n-attr-title="doc.edit.find.btn.prev.title">↑</button>
+        <button id="edit-find-next-btn" class="secondary-btn" type="button" title="下一個 (Enter)" data-i18n-attr-title="doc.edit.find.btn.next.title">↓</button>
+        <span class="edit-find-divider"></span>
+        <input type="text" id="edit-replace-input" class="edit-find-input" placeholder="取代為" data-i18n-attr-placeholder="doc.edit.find.replacePlaceholder">
+        <button id="edit-replace-btn" class="secondary-btn" type="button" title="取代當前" data-i18n="doc.edit.find.btn.replace" data-i18n-attr-title="doc.edit.find.btn.replace.title">取代</button>
+        <button id="edit-replace-all-btn" class="secondary-btn" type="button" title="全部取代" data-i18n="doc.edit.find.btn.replaceAll" data-i18n-attr-title="doc.edit.find.btn.replaceAll.title">全部取代</button>
+        <span class="edit-toolbar-spacer"></span>
+        <button id="edit-find-close-btn" class="secondary-btn" type="button" title="關閉 (Esc)" data-i18n-attr-title="doc.edit.find.btn.close.title">×</button>
+      </div>
+      <div class="edit-help" data-i18n-html="doc.edit.help.html">
+        <strong>支援格式</strong>：<code>**粗體**</code>、<code>*斜體*</code>、<code>[連結文字](網址)</code>。其他字元當純文字。譯文留空表示不顯示譯文（保留原文）。儲存後會重新產生雙頁預覽，編輯結果不會跨次保存。<strong>搜尋取代</strong>：<code>⌘F</code> / <code>Ctrl+F</code> 開啟
+      </div>
+      <div id="edit-list" class="edit-list"></div>
+    </section>
+
+    <!-- 階段 6：文章術語表編輯（v1.8.49）——翻譯前 / reader 內都可進來編輯 -->
+    <section id="stage-glossary" class="stage" hidden>
+      <div class="glossary-toolbar">
+        <span class="glossary-toolbar-title" data-i18n="doc.glossary.title">文章術語表</span>
+        <span id="glossary-count" class="glossary-count">0 條</span>
+        <span class="edit-toolbar-spacer"></span>
+        <button id="glossary-import-btn" class="secondary-btn" type="button" title="從 JSON 或 CSV 檔匯入術語表（可與現有內容合併或覆蓋；CSV 為兩欄「原文,譯名」）" data-i18n="doc.glossary.btn.import" data-i18n-attr-title="doc.glossary.btn.import.title">匯入術語表</button>
+        <button id="glossary-export-btn" class="secondary-btn" type="button" title="把目前術語表存成 JSON 檔" data-i18n="doc.glossary.btn.export" data-i18n-attr-title="doc.glossary.btn.export.title">匯出術語表</button>
+        <button id="glossary-reextract-btn" class="secondary-btn" type="button" title="重新請 AI 抽取（覆蓋現有內容）" data-i18n="doc.glossary.btn.reextract" data-i18n-attr-title="doc.glossary.btn.reextract.title">重新抽取</button>
+        <button id="glossary-clear-btn" class="secondary-btn" type="button" title="清空整份術語表" data-i18n="doc.glossary.btn.clear" data-i18n-attr-title="doc.glossary.btn.clear.title">清空</button>
+        <button id="glossary-cancel-btn" class="secondary-btn" type="button" data-i18n="doc.glossary.btn.cancel">取消</button>
+        <button id="glossary-translate-btn" class="primary-btn" type="button" data-i18n="doc.glossary.btn.translate">用此術語表翻譯</button>
+      </div>
+      <div class="edit-help" data-i18n-html="doc.glossary.help.html">
+        <strong>用途</strong>：翻譯時 AI 會把這份對照表當作必須遵守的譯名規則，確保人名 / 專有名詞前後譯法一致。文章術語表跟「設定 → 術語表」的固定術語表合併使用，<strong>同一個原文以文章術語表為準</strong>。從閱讀器進來編輯後按「用此術語表翻譯」會重新呼叫 AI 翻整份文件，會產生費用
+      </div>
+      <div class="glossary-table-wrap">
+        <div id="glossary-grid" class="glossary-grid">
+          <div class="g-header g-sortable" id="g-sort-source" title="點擊依此欄排序" data-i18n-attr-title="doc.glossary.sort.title"><span data-i18n="doc.glossary.col.source">原文</span><span class="g-sort-arrow"></span></div>
+          <div class="g-header g-sortable" id="g-sort-target" title="點擊依此欄排序" data-i18n-attr-title="doc.glossary.sort.title"><span data-i18n="doc.glossary.col.target">譯文</span><span class="g-sort-arrow"></span></div>
+          <div class="g-header" data-i18n="doc.glossary.col.options">選項</div>
+          <div class="g-header g-header-action"></div>
+          <div class="g-header g-header-secondary" data-i18n="doc.glossary.col.source">原文</div>
+          <div class="g-header g-header-secondary" data-i18n="doc.glossary.col.target">譯文</div>
+          <div class="g-header g-header-secondary" data-i18n="doc.glossary.col.options">選項</div>
+          <div class="g-header g-header-action g-header-secondary"></div>
+        </div>
+        <div class="glossary-actions">
+          <button id="glossary-add-row-btn" class="secondary-btn" type="button" data-i18n="doc.glossary.btn.addRow">＋ 加一列</button>
+        </div>
+      </div>
+      <!-- 本書獨立禁用詞（EPUB 才顯示，v2.0.11）：與「設定 → 禁用詞清單」合併注入 -->
+      <div id="book-forbidden-section" class="book-forbidden-section" hidden>
+        <div class="glossary-toolbar-title" id="book-forbidden-title" data-i18n="doc.epub.forbidden.title">本書禁用詞</div>
+        <p class="settings-hint" id="book-forbidden-hint" data-i18n="doc.epub.forbidden.hint">只套用在這本書的禁用詞，與「設定 → 禁用詞清單」的共通清單合併使用。替換詞留空 = 請 AI 自行改寫</p>
+        <div id="book-forbidden-grid" class="book-forbidden-grid">
+          <div class="g-header" data-i18n="doc.epub.forbidden.col.forbidden">禁用詞</div>
+          <div class="g-header" data-i18n="doc.epub.forbidden.col.replacement">替換詞（可留空）</div>
+          <div class="g-header g-header-action"></div>
+        </div>
+        <div class="glossary-actions">
+          <button id="book-forbidden-add-btn" class="secondary-btn" type="button" data-i18n="doc.glossary.btn.addRow">＋ 加一列</button>
+        </div>
+      </div>
+      <input type="file" id="glossary-import-file" accept="application/json,.json,text/csv,.csv" hidden>
+    </section>
+
+    <!-- 階段 4：debug overlay（W2-iter1 視覺化先行——疊 SVG 在 PDF.js canvas 上） -->
+    <section id="stage-debug" class="stage" hidden>
+      <div class="debug-toolbar">
+        <button id="debug-prev" class="secondary-btn" type="button">←</button>
+        <span id="debug-page-indicator" class="debug-page-indicator">第 1 / 1 頁</span>
+        <button id="debug-next" class="secondary-btn" type="button">→</button>
+        <span class="debug-toolbar-spacer"></span>
+        <label class="debug-toolbar-toggle">
+          <input type="checkbox" id="debug-show-bbox" checked>
+          <span data-i18n="doc.debug.bbox">顯示 bbox</span>
+        </label>
+        <label class="debug-toolbar-toggle">
+          <input type="checkbox" id="debug-show-order" checked>
+          <span data-i18n="doc.debug.order">顯示 reading order</span>
+        </label>
+        <span class="debug-isolate-row">
+          <span data-i18n="doc.debug.isolate.label">只看 #</span>
+          <input type="number" id="debug-isolate-input" min="0" placeholder="全部" data-i18n-attr-placeholder="doc.debug.isolate.placeholder">
+        </span>
+        <span class="debug-toolbar-toggle">
+          <span data-i18n="doc.debug.color.label">上色：</span>
+          <select id="debug-color-mode" class="debug-color-select">
+            <option value="type" selected data-i18n="doc.debug.color.byType">依類型</option>
+            <option value="order" data-i18n="doc.debug.color.byOrder">依 reading order</option>
+          </select>
+        </span>
+        <button id="debug-copy-json-btn" class="secondary-btn" type="button" title="複製整份 layout doc 序列化結果到剪貼簿（供回報 / debug 用）" data-i18n="doc.debug.btn.copyJson" data-i18n-attr-title="doc.debug.btn.copyJson.title">複製 JSON</button>
+        <button id="debug-back-btn" class="secondary-btn" type="button" data-i18n="doc.debug.btn.back">關閉</button>
+      </div>
+
+      <div class="debug-stats">
+        <span id="debug-page-stats"></span>
+      </div>
+
+      <div class="debug-type-legend" id="debug-type-legend"></div>
+
+      <!-- detail 放在 viewport 上方 + sticky，讓使用者 hover 時不需要 scroll
+           就能看到原文/譯文（bbox / canvas 高可達 1100+ px，放下面看不到） -->
+      <div class="debug-detail" id="debug-detail">
+        <span class="debug-detail-empty" data-i18n="doc.debug.detail.empty">把游標移到 bbox 上看該 block 的 plainText / 譯文</span>
+      </div>
+
+      <div class="debug-viewport-wrap">
+        <div class="debug-viewport" id="debug-viewport">
+          <canvas id="debug-canvas"></canvas>
+          <svg id="debug-svg" class="debug-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span class="footer-version" id="footer-version"></span>
+  </footer>
+
+  <!-- pdf-lib + fontkit UMD bundles（W6 譯文 PDF 下載用）
+       — 載成 window.PDFLib / window.fontkit globals，給 pdf-renderer.js 用 -->
+  <script src="../lib/vendor/pdf-lib/pdf-lib.min.js"></script>
+  <script src="../lib/vendor/pdf-lib/fontkit.umd.min.js"></script>
+  <!-- EPUB 翻譯（v2.0.11）：fflate 解壓/打包 + 重用 content script 的 ⟦N⟧ 序列化器。
+       content-ns.js 會重建 window.__SK，必須排在 lib/i18n.js 之前（i18n attach 到同一 namespace）。
+       此頁的 __SK 與網頁 content script instance 互不相干；EPUB 專屬序列化政策
+       override 見 epub-engine.js applyEpubSerializerPolicy -->
+  <script src="../lib/vendor/fflate/fflate.umd.js"></script>
+  <script src="../content-ns.js"></script>
+  <script src="../content-serialize.js"></script>
+  <script src="../lib/i18n.js"></script>
+  <script src="../lib/edit-link-repair.js"></script>
+  <script type="module" src="index.js"></script>
+</body>
+</html>

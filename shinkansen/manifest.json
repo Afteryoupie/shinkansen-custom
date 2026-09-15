@@ -1,0 +1,159 @@
+{
+  "manifest_version": 3,
+  "name": "Shinkansen Custom",
+  "version": "2.5.0",
+  "description": "__MSG_extDescription__",
+  "default_locale": "zh_TW",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "shinkansen@jimmy.zm.su"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "webNavigation",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://generativelanguage.googleapis.com/*",
+    "https://translate.googleapis.com/*",
+    "https://www.instapaper.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://m.youtube.com/*"
+      ],
+      "js": [
+        "content-youtube-main.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content-fw-detect-main.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://youtube.googleapis.com/*"
+      ],
+      "js": [
+        "content-drive-iframe.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content-ns.js",
+        "lib/distribution-cs.js",
+        "lib/i18n-content.js",
+        "lib/shortcut-utils.js",
+        "lib/format-currency.js",
+        "lib/domain-utils.js",
+        "lib/edit-link-repair.js",
+        "lib/readability.js",
+        "content-toast.js",
+        "content-detect.js",
+        "content-serialize.js",
+        "content-inject.js",
+        "content-spa.js",
+        "content-youtube.js",
+        "content-drive.js",
+        "content-touch.js",
+        "content.js",
+        "content-shortcuts.js",
+        "content-floating-icon.js",
+        "custom/yt-player-btn.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_title": "__MSG_actionTitle__",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "translate-doc/*",
+        "lib/vendor/pdfjs/*",
+        "lib/vendor/pdf-lib/*",
+        "lib/vendor/fonts/*",
+        "icons/icon-48.png",
+        "popup/popup.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "commands": {
+    "translate-preset-0": {
+      "suggested_key": {
+        "default": "Alt+S",
+        "mac": "Alt+S"
+      },
+      "description": "__MSG_cmdTranslateMain__"
+    },
+    "translate-preset-1": {
+      "suggested_key": {
+        "default": "Alt+A",
+        "mac": "Alt+A"
+      },
+      "description": "__MSG_cmdTranslatePreset2__"
+    },
+    "translate-preset-3": {
+      "suggested_key": {
+        "default": "Alt+D",
+        "mac": "Alt+D"
+      },
+      "description": "__MSG_cmdTranslatePreset3__"
+    },
+    "send-to-instapaper": {
+      "suggested_key": {
+        "default": "Alt+I",
+        "mac": "Alt+I"
+      },
+      "description": "__MSG_cmdSendInstapaper__"
+    }
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApiLpBCmpyptq8EHKcPw9UsRmLsjaFmGS/AV/moSuCevP1J76ApI7HUB4rcJ3xpp3MH1boT2DI9efXKFly4UY5dTH6ezna8w2H8DdqrJ5Qjyrb+ijtBGiIE25jx2CxRHRiExgg4gs9CBqGAO0Dqx8D+ilaFL002+eCue106datkRwcEFvaRlglE89NtAqZifG/eWcD0KRPUixgKk0QV2fc/qDEkf38Ec2p5m3dCpcLdHn/vjMrIWLBSom71g7icpzZbvOk2JKnh8Bo8XDGZII6TgQBCrd2s282glsFgnWlP85d9xXickRyOGhSGkUaTgK9tUrQ1tYqMZvqUU9+idyDwIDAQAB"
+}

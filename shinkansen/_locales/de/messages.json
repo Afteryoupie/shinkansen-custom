@@ -1,0 +1,26 @@
+{
+  "extName": {
+    "message": "Shinkansen Custom",
+    "description": "Name der Erweiterung"
+  },
+  "extDescription": {
+    "message": "Schnelle, flüssige Übersetzung für Webseiten und YouTube-Untertitel. 8 Zielsprachen, Daten bleiben im Browser."
+  },
+  "actionTitle": {
+    "message": "Shinkansen Custom Übersetzen",
+    "description": "工具列圖示 tooltip（manifest action.default_title）"
+  },
+  "cmdTranslateMain": {
+    "message": "Diese Seite übersetzen — Haupt-Preset",
+    "description": "快速鍵說明（chrome://extensions/shortcuts）"
+  },
+  "cmdTranslatePreset2": {
+    "message": "Diese Seite übersetzen — Preset 2"
+  },
+  "cmdTranslatePreset3": {
+    "message": "Diese Seite übersetzen — Preset 3"
+  },
+  "cmdSendInstapaper": {
+    "message": "An Instapaper senden"
+  }
+}

@@ -1,0 +1,1579 @@
+/* 🎨 石板海軍珊瑚 (Slate & Coral) 佈景主題核心設計代碼 */
+:root {
+  --color-slate-dark: #354B5E;
+  --color-steel-blue: #475F77;
+  --color-ivory-white: #DCDDD8;
+  --color-coral-red: #D74B4B;
+
+  /* ☀️ 白色版 (Light Slate & Coral) */
+  color-scheme: light;
+  --bg-page: #f4f6f8;
+  --bg-container: #ffffff;
+  --bg-card: #f8fafb;
+  --bg-card-alt: #f0f4f8;
+  --bg-input: #ffffff;
+  --bg-hover: #eef2f5;
+  --border: #d0d7de;
+  --border-divider: #e8ecf0;
+  --text-main: #22313f;
+  --text-muted: #6b8296;
+  --accent-primary: #D74B4B;
+  --accent-hover: #c43f3f;
+  --accent-fg: #ffffff;
+  --accent-subtle-bg: rgba(215, 75, 75, 0.08);
+  --accent-subtle-border: rgba(215, 75, 75, 0.25);
+  --btn-secondary-bg: #f4f6f8;
+  --btn-secondary-fg: #354B5E;
+  --btn-secondary-border: #475F77;
+  --btn-secondary-hover: #e2e7ec;
+  --table-header-bg: #f5f7f9;
+  --table-row-hover: #f0f4f8;
+  --code-bg: #1c2833;
+  --code-fg: #DCDDD8;
+  --kbd-bg: #f4f6f8;
+  --shadow-container: 0 4px 20px rgba(53, 75, 94, 0.12);
+}
+
+/* 🌙 深色版 (Dark Slate & Coral) */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #17202a;
+  --bg-container: #243443;
+  --bg-card: #1e2b37;
+  --bg-card-alt: #273746;
+  --bg-input: #1a252f;
+  --bg-hover: #2e4154;
+  --border: #475F77;
+  --border-divider: #2e4154;
+  --text-main: #DCDDD8;
+  --text-muted: #9cb1c4;
+  --accent-primary: #D74B4B;
+  --accent-hover: #e05e5e;
+  --accent-fg: #ffffff;
+  --accent-subtle-bg: rgba(215, 75, 75, 0.18);
+  --accent-subtle-border: rgba(215, 75, 75, 0.5);
+  --btn-secondary-bg: #273746;
+  --btn-secondary-fg: #DCDDD8;
+  --btn-secondary-border: #475F77;
+  --btn-secondary-hover: #354B5E;
+  --table-header-bg: #1e2b37;
+  --table-row-hover: #273746;
+  --code-bg: #141c24;
+  --code-fg: #DCDDD8;
+  --kbd-bg: #273746;
+  --shadow-container: 0 4px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* 系統深色模式自動跟隨 (未手動指定 light 時生效) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg-page: #17202a;
+    --bg-container: #243443;
+    --bg-card: #1e2b37;
+    --bg-card-alt: #273746;
+    --bg-input: #1a252f;
+    --bg-hover: #2e4154;
+    --border: #475F77;
+    --border-divider: #2e4154;
+    --text-main: #DCDDD8;
+    --text-muted: #9cb1c4;
+    --accent-primary: #D74B4B;
+    --accent-hover: #e05e5e;
+    --accent-fg: #ffffff;
+    --accent-subtle-bg: rgba(215, 75, 75, 0.18);
+    --accent-subtle-border: rgba(215, 75, 75, 0.5);
+    --btn-secondary-bg: #273746;
+    --btn-secondary-fg: #DCDDD8;
+    --btn-secondary-border: #475F77;
+    --btn-secondary-hover: #354B5E;
+    --table-header-bg: #1e2b37;
+    --table-row-hover: #273746;
+    --code-bg: #141c24;
+    --code-fg: #DCDDD8;
+    --kbd-bg: #273746;
+    --shadow-container: 0 4px 24px rgba(0, 0, 0, 0.45);
+  }
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  background: var(--bg-page);
+  color: var(--text-main);
+  transition: background-color .2s ease, color .2s ease;
+}
+
+.container {
+  max-width: 720px;
+  margin: 40px auto;
+  padding: 32px;
+  background: var(--bg-container);
+  border-radius: 12px;
+  box-shadow: var(--shadow-container);
+  border: 1px solid var(--border-divider);
+  transition: background-color .2s ease, border-color .2s ease;
+}
+
+h1 { margin: 0 0 16px; font-size: 22px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.page-title-icon { width: 32px; height: 32px; flex-shrink: 0; }
+/* iOS / iPadOS 上架提示 pill(h1 右端;iOS build 由 options.js 隱藏) */
+.ios-promo {
+  margin-left: auto;
+  align-self: center;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--accent-primary);
+  color: var(--accent-fg);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background-color .15s ease;
+}
+.ios-promo:hover { background: var(--accent-hover); }
+h2 { margin: 28px 0 12px; font-size: 15px; color: var(--accent-primary); border-bottom: 1px solid var(--border-divider); padding-bottom: 6px; }
+
+section { margin-bottom: 20px; }
+
+label {
+  display: block;
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+label.switch { display: flex; align-items: center; gap: 8px; }
+
+label.checkbox-label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; margin: 10px 0; }
+label.checkbox-label input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; }
+.checkbox-body { display: flex; flex-direction: column; gap: 3px; }
+.checkbox-body small { display: block; line-height: 1.5; }
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="date"],
+select,
+textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 13px -apple-system, 'PingFang TC', monospace;
+  box-sizing: border-box;
+  background: var(--bg-input);
+  color: var(--text-main);
+  transition: border-color .15s ease, background-color .15s ease;
+}
+
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="date"]:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(215, 75, 75, 0.15);
+}
+
+textarea { resize: vertical; font-family: -apple-system, 'PingFang TC', sans-serif; }
+
+/* API Key 輸入框旁邊的「顯示/隱藏」切換按鈕（v0.63） */
+.api-key-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 4px;
+}
+.api-key-row input {
+  flex: 1;
+  margin-top: 0;
+}
+.ghost-btn {
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--btn-secondary-bg);
+  color: var(--text-main);
+  font: 13px -apple-system, 'PingFang TC', sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color .15s ease;
+}
+.ghost-btn:hover { background: var(--btn-secondary-hover); }
+.ghost-btn:active { background: var(--bg-hover); }
+.ghost-btn[data-state="loading"] { color: var(--text-muted); cursor: wait; }
+.ghost-btn:disabled { color: var(--border); cursor: not-allowed; background: transparent; }
+
+/* v1.5.7: API Key 測試結果訊息列（成功綠 / 失敗紅 / 進行中灰） */
+.api-test-result {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.api-test-result[data-state="ok"]      { background: #ecfdf3; color: #117a3e; border: 1px solid #b6efc9; }
+.api-test-result[data-state="fail"]    { background: #fff1f0; color: #c1312b; border: 1px solid #f5c1bd; }
+.api-test-result[data-state="loading"] { background: #f2f2f7; color: #555;    border: 1px solid #e5e5ea; }
+
+/* v1.8.41:Firefox HTTPS-Only Mode 警告（橘色 attention，不到 error 等級） */
+.firefox-https-warn:not([hidden]) {
+  display: block;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #fff8eb;
+  border: 1px solid #f5d987;
+  border-radius: 6px;
+  color: #855900;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* P1 (v1.8.59): 切換目標語言時，若使用者已客製化 prompt，textarea 不自動覆蓋,
+   顯示此警示 hint 提醒「prompt 沒跟著切」。橘底配色,跟下方 .firefox-https-warn 共享色系 */
+.target-mismatch-hint {
+  display: block;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #fff8eb;
+  border: 1px solid #f5d987;
+  border-radius: 6px;
+  color: #855900;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.target-mismatch-hint[hidden] { display: none; }
+
+/* 自行輸入模型 ID（v0.64） */
+/* v1.6.15: .custom-model-row 隨全域 model dropdown 一起移除（自行輸入欄位失效） */
+
+.muted { color: var(--text-muted); font-size: 12px; }
+
+.actions {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-divider);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+button.primary {
+  padding: 10px 24px;
+  background: var(--accent-primary);
+  color: var(--accent-fg);
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color .15s ease;
+}
+button.primary:hover { background: var(--accent-hover); }
+
+button.secondary {
+  /* v1.6.17: 高度與字級對齊 .primary(padding 9px 20px + font-size 14px),
+     保留 secondary 自身視覺性（白底藍邊細字）。primary 因 padding 10px 24px
+     + 粗字 600 + 無 border 仍視覺較突出，符合「主動作 vs 次動作」design pattern。
+     box-sizing: content-box 下 secondary 總高 ≈ 9*2 + 14*1.2 + 2(border) ≈ 38px;
+     primary 總高 ≈ 10*2 + 14*1.2 ≈ 37px，差距在 1px 內視覺一致。 */
+  padding: 9px 20px;
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-fg);
+  border: 1px solid var(--btn-secondary-border);
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+button.secondary:hover { background: var(--btn-secondary-hover); }
+
+.btn-row { display: flex; gap: 8px; }
+
+.triple { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.triple label { margin: 0; }
+
+#save-status { font-size: 12px; color: #34c759; }
+
+/* v0.94: 儲存狀態提示條（固定在頁面頂端） */
+.save-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  transition: opacity .3s;
+}
+.save-bar.dirty {
+  background: #ff3b30;
+  color: #fff;
+}
+.save-bar.saved {
+  background: #34c759;
+  color: #fff;
+}
+
+#log-view {
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  font: 11px 'SF Mono', Menlo, monospace;
+  max-height: 300px;
+  overflow: auto;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  border: 1px solid var(--border-divider);
+}
+
+kbd {
+  background: var(--kbd-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font: 11px 'SF Mono', monospace;
+  color: var(--text-main);
+}
+
+a { color: var(--accent-primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ═══ v0.86: Tab 切換 ═══ */
+.tab-bar {
+  display: flex;
+  /* v1.8.60: en/zh-CN UI 後 tab label 較長(YouTube subtitles / Custom model
+     等)會超過 container 720px 寬。改 flex-wrap: wrap 讓 tab 自動折行,
+     而不是水平捲軸(後者捲軸太細,使用者看不出來「右邊還有 tab」)。
+     zh-TW UI tab 寬度足夠時仍維持單列。 */
+  flex-wrap: wrap;
+  gap: 0;
+  margin-bottom: 24px;
+  border-bottom: 2px solid var(--border-divider);
+}
+.tab-btn {
+  padding: 10px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  font: 14px -apple-system, 'PingFang TC', sans-serif;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+  /* v1.5.6: 7 個 tab 後 flex 分配寬度被壓縮，禁止文字折行——
+     padding 從 24px 降到 18px 留更多橫向空間給文字本體。 */
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tab-btn:hover { color: var(--text-main); }
+.tab-btn.active {
+  color: var(--accent-primary);
+  border-bottom-color: var(--accent-primary);
+  font-weight: 600;
+}
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ═══ v0.86: 用量紀錄頁面 ═══ */
+.usage-controls {
+  /* v1.5.7: 整列垂直置中（不再 flex-end），讓 date / select / 按鈕基線對齊 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.usage-date-label {
+  /* v1.5.7: flex row 讓 date input + HH select + : + MM select 一列排好 */
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+.usage-date-label > :first-child {
+  /* 「從」「到」標籤文字本身 — flex 第一個非 input 子節點視為 label，加右 margin */
+  margin-right: 4px;
+}
+/* v1.5.7: 統一規格——date input / time select / 「現在時間」按鈕同高同 padding 同 border。
+   單獨設原生 input / select 預設 OS 樣式高度不一致，用 box-sizing border-box + 固定 height 強制對齊。 */
+.usage-date-label input[type="date"],
+.usage-date-label .usage-time-select,
+#usage-to-now {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 13px -apple-system, 'PingFang TC', sans-serif;
+  color: var(--text-main);
+  background: var(--bg-input);
+  box-sizing: border-box;
+  margin: 0;
+  line-height: 1;
+}
+.usage-date-label input[type="date"] {
+  width: 130px;
+}
+/* v1.9.10(2026-05-12 macOS Safari 真機驗證後加):
+   1. .open-shortcuts-link 在 Safari 隱藏 — Safari 不允許 extension UI 改快速鍵
+      (Apple 限制),chrome://extensions/shortcuts 與 about:addons 都打不開,
+      留 link 對 Safari user 是廢資訊
+   2. Safari `<input type="date">` 文字 baseline 偏上,跟同 row select stepper 對不齊。
+      v1.9.10 試 `::-webkit-datetime-edit-fields-wrapper`(Chrome 內部結構,Safari 不認)
+      + v1.9.11 試 `::-webkit-datetime-edit` padding/margin/line-height + padding-top 4px
+      都沒生效(Safari 26 macOS 對 type=date 已改用 native NSDatePicker style,webkit
+      shadow DOM 內部 pseudo selector 不再有效)。最終走 `-webkit-appearance: textfield`
+      把 visual style 變成普通 text field,baseline 對齊問題消失。**semantic type=date
+      未改**,Safari focus 仍會彈出 native 日曆 widget(只是失去 input box 右側日曆 icon)。
+      參考:8yd.no/article/date-input-height-in-safari */
+body.runtime-safari .open-shortcuts-link {
+  display: none;
+}
+/* 翻譯快速鍵說明依瀏覽器引擎切換（對應實際可用的修飾鍵）：
+   桌面 Chrome / Firefox → intro-desktop（⌥ Option 或 ⌃ Control）；
+   Safari（Mac / iPad / iPhone，body.runtime-safari）→ intro-safari（只能 ⌃ Control）。
+   body class 由 options.js 依 _shortcutsPlatform 加（runtime-chrome / -firefox / -safari）。 */
+.intro-desktop,
+.intro-safari {
+  display: none;
+}
+body.runtime-chrome .intro-desktop,
+body.runtime-firefox .intro-desktop {
+  display: block;
+}
+body.runtime-safari .intro-safari {
+  display: block;
+}
+/* iOS build 四指 tap 專屬說明（SPEC-PRIVATE §26）：預設隱藏，只在
+   body.runtime-ios-touch（真觸控裝置，options.js 依 isTouchScreenDevice() 加）
+   顯示。平台屬性 → iOS build 跑在 macOS（無觸控）時不顯示，尊重 macOS 特性
+   （見 lib/platform.js）；intro-safari 的 ⌃ Control 說明照常顯示。 */
+.ios-only {
+  display: none;
+}
+body.runtime-ios-touch .ios-only {
+  display: block;
+}
+body.runtime-safari .usage-date-label input[type="date"] {
+  /* v1.9.11 真機 computed style debug 後修(2026-05-12):
+     Safari 26 macOS 對 `<input type="date">` 即使套 `-webkit-appearance: textfield`,
+     內部 `::-webkit-datetime-edit` pseudo-element 仍保留 webkit 自家 layout 規則,
+     line-box 預設靠 content area 頂端對齊(非 center),導致文字偏上 ~7px。
+     修法:
+     1. `-webkit-appearance: textfield`:取消 native NSDatePicker chrome,
+        type=date semantic 不變(focus 仍彈日曆 picker)
+     2. `line-height: 25px`:撐高 line-box(預設 13px = font-size)+ 微調抵消
+        拉丁數字 0-9 visual weight 偏底部的視覺差(ascender > descender)。
+        line-box 撐滿 30px content area(geometric center)時數字仍 visual 偏低,
+        25px 是當前字型(-apple-system + PingFang TC + 13px)的 visual sweet spot,
+        baseline 推到跟同 row select stepper 對齊
+     Chrome / Chromium 對 datetime-edit vertical center 已 patch,不需此修法,
+     `body.runtime-safari` selector scope 嚴格只在 Safari runtime 套用(三層保護:
+     body class 由 _extUrl prefix 偵測 + chrome-extension:// 永不 match runtime-safari)
+     參考:8yd.no/article/date-input-height-in-safari */
+  -webkit-appearance: textfield;
+  appearance: textfield;
+  line-height: 25px;
+}
+body.runtime-safari .usage-date-label input[type="date"]::-webkit-datetime-edit {
+  line-height: 25px;
+}
+.usage-time-select {
+  /* HH / MM select — 寬度自定義（不被全域 select 樣式撐大），24h 制 */
+  width: 56px !important;
+  min-width: 0;
+  padding-right: 4px; /* 給 native dropdown caret 留空間 */
+}
+.usage-time-sep {
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 0 2px;
+}
+#usage-to-now {
+  /* 跟 input/select 同高同邊框，但加 hover 顏色暗示可點 */
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-fg);
+  border: 1px solid var(--btn-secondary-border);
+  cursor: pointer;
+  padding: 0 14px;
+  /* v1.5.7: 貼第一列最右，與第二列右側的「全部模型」select 對齊形成兩端勻稱 */
+  margin-left: auto;
+  transition: background-color .15s ease;
+}
+#usage-to-now:hover  { background: var(--btn-secondary-hover); }
+#usage-to-now:active { background: var(--bg-hover); }
+/* v1.2.60: 搜尋框；v1.3.2: flex 排列含模型篩選；v1.5.7: 同 .usage-controls 規格對齊 */
+.usage-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;       /* 不准 wrap — 三段一定要同列 */
+  margin-bottom: 12px;
+}
+.usage-search-row input[type="text"] {
+  /* 搜尋框佔中段彈性空間 */
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 13px -apple-system, 'PingFang TC', sans-serif;
+  color: var(--text-main);
+  background: var(--bg-input);
+  box-sizing: border-box;
+  margin: 0;
+}
+.usage-search-row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+/* v1.3.2: 模型篩選下拉；v1.5.7: 寬度收斂、與其他 widget 同高 */
+.usage-search-row select {
+  flex: 0 0 auto;
+  width: 200px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 13px -apple-system, 'PingFang TC', sans-serif;
+  color: var(--text-main);
+  background: var(--bg-input);
+  cursor: pointer;
+  box-sizing: border-box;
+  margin: 0;
+}
+.usage-search-row select:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+/* v1.5.7: 移除 margin-left:auto — 日週月按鈕貼左排，跟下方搜尋同 x 起點 */
+.usage-granularity {
+  display: flex;
+  gap: 0;
+  flex: 0 0 auto;
+}
+.gran-btn {
+  /* v1.5.7: 改 height-based 對齊到 32px，與 input / select 同高 */
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-container);
+  color: var(--text-main);
+  font: 13px -apple-system, 'PingFang TC', sans-serif;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  box-sizing: border-box;
+  line-height: 1;
+}
+.gran-btn:first-child { border-radius: 6px 0 0 6px; }
+.gran-btn:last-child { border-radius: 0 6px 6px 0; }
+.gran-btn:not(:first-child) { border-left: none; }
+.gran-btn.active {
+  background: var(--accent-primary);
+  color: var(--accent-fg);
+  border-color: var(--accent-primary);
+}
+.gran-btn.active + .gran-btn { border-left-color: var(--accent-primary); }
+
+/* 彙總卡片 */
+.usage-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.summary-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  padding: 14px 12px;
+  text-align: center;
+}
+.summary-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.summary-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* 折線圖 */
+.chart-container {
+  position: relative;
+  height: 260px;
+  margin-bottom: 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+/* 紀錄表格 */
+.usage-table-wrapper {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+}
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.usage-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--table-header-bg);
+}
+.usage-table th,
+.usage-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-divider);
+  color: var(--text-main);
+}
+.usage-table th { font-weight: 600; color: var(--text-muted); font-size: 11px; text-transform: uppercase; }
+.usage-table th.num,
+.usage-table td.num { text-align: right; }
+/* preset label 自 v1.8.19 起放寬至 30 字元，避免長 label 撐寬整列；
+   原 v1.2.61 的 nowrap 是為了「不要把『3.1-flash-lite』折行」，放寬後改成
+   max-width + ellipsis 兼顧短/長 label 兩種情境，完整 label 由 title attr 補。 */
+.usage-table .col-model {
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.usage-table tbody tr:hover { background: var(--table-row-hover); }
+.usage-table .site-url {
+  display: block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.usage-cache-hit {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* 術語表抽取紀錄的標題前綴標籤 */
+.usage-source-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* v1.8.39: 用量明細分頁 */
+.usage-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.usage-pagination .usage-page-info {
+  font-size: 12px;
+  min-width: 200px;
+  text-align: center;
+}
+/* display: flex 會 override user-agent 的 [hidden] { display: none }，
+   導致 options.js 在 ≤1 頁時設 hidden 後「上一頁／下一頁」死按鈕照樣顯示
+   （同 v1.6.5 .update-banner-row[hidden] 的坑） */
+.usage-pagination[hidden] { display: none !important; }
+.usage-pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ═══ v0.88: Log 分頁 ═══════════════════════════════════════ */
+.log-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.log-toolbar select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg-input);
+  color: var(--text-main);
+}
+.log-toolbar input[type="text"] {
+  flex: 1;
+  min-width: 120px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg-input);
+  color: var(--text-main);
+}
+.log-autoscroll-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.log-autoscroll-label input { margin: 0; }
+
+.log-table-wrapper {
+  max-height: 520px;
+  overflow-y: auto;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-container);
+}
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+.log-table thead { position: sticky; top: 0; z-index: 1; }
+.log-table th {
+  background: var(--table-header-bg);
+  padding: 6px 8px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-divider);
+}
+.log-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-divider);
+  vertical-align: top;
+  line-height: 1.4;
+  color: var(--text-main);
+}
+.log-table tbody tr:hover { background: var(--table-row-hover); }
+.log-col-time { width: 75px; white-space: nowrap; }
+.log-col-cat  { width: 80px; }
+.log-col-lvl  { width: 44px; }
+.log-col-msg  { /* 佔剩餘空間 */ }
+
+/* 分類標籤 */
+.log-cat {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: -apple-system, 'PingFang TC', sans-serif;
+}
+.log-cat-translate  { background: #e8f5e9; color: #2e7d32; }
+.log-cat-api        { background: #e3f2fd; color: #1565c0; }
+.log-cat-cache      { background: #fff3e0; color: #e65100; }
+.log-cat-glossary   { background: #f3e5f5; color: #6a1b9a; }
+.log-cat-spa        { background: #e0f7fa; color: #00695c; }
+.log-cat-system     { background: #f5f5f5; color: #616161; }
+
+/* 等級 */
+.log-lvl { font-weight: 600; }
+.log-lvl-info  { color: #1565c0; }
+.log-lvl-warn  { color: #e65100; }
+.log-lvl-error { color: #c62828; }
+
+/* 訊息 */
+.log-msg-text {
+  word-break: break-word;
+}
+.log-row-error td { background: rgba(215, 75, 75, 0.15); }
+.log-row-warn td  { background: rgba(255, 149, 0, 0.15); }
+
+/* data 展開 */
+.log-data-toggle {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 10px;
+  color: var(--accent-primary);
+  cursor: pointer;
+  border: 1px solid var(--accent-primary);
+  border-radius: 3px;
+  background: none;
+  vertical-align: middle;
+}
+.log-data-toggle:hover { background: var(--accent-subtle-bg); }
+.log-data-detail {
+  display: none;
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: var(--bg-card-alt);
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-main);
+  border: 1px solid var(--border-divider);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.log-data-detail.open { display: block; }
+
+/* v1.5.7: 搜尋命中字串高亮（含批次內容搜尋的 inputPreview / outputPreview） */
+.log-search-hit {
+  background: #fff3a0;
+  color: #1d1d1f;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* 底部狀態列 */
+.log-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.log-devtools-option {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-divider);
+}
+
+/* ═══ v1.0.29: 固定術語表 ═══════════════════════════════════ */
+.glossary-scope-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin: 16px 0 8px;
+}
+.glossary-table-wrapper {
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.glossary-edit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.glossary-edit-table th {
+  background: var(--table-header-bg);
+  padding: 6px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-divider);
+}
+.glossary-edit-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border-divider);
+  color: var(--text-main);
+}
+.glossary-edit-table td input {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font: 13px -apple-system, 'PingFang TC', sans-serif;
+  background: transparent;
+  color: var(--text-main);
+  box-sizing: border-box;
+  margin: 0;
+}
+.glossary-edit-table td input:focus {
+  border-color: var(--accent-primary);
+  background: var(--bg-input);
+  outline: none;
+}
+.glossary-col-action { width: 36px; text-align: center; }
+.glossary-delete-row {
+  background: none;
+  border: none;
+  color: #ff3b30;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.glossary-delete-row:hover { background: #fff5f5; }
+.glossary-add-btn {
+  margin-top: 8px;
+  font-size: 12px;
+  padding: 6px 14px;
+}
+.glossary-domain-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+/* v1.8.61:select / input / button 同高(對齊 button.secondary ~38px),消除原生
+   select / input 預設 OS 渲染微差;同 v1.5.7 usage-date-label 對齊策略。 */
+.glossary-domain-controls select,
+.glossary-domain-controls input,
+.glossary-domain-controls button {
+  height: 38px;
+  margin: 0;
+  box-sizing: border-box;
+}
+.glossary-domain-controls select {
+  width: auto;
+  min-width: 180px;
+}
+.glossary-domain-controls input {
+  flex: 1;
+}
+.glossary-domain-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.glossary-domain-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+.glossary-delete-domain-btn {
+  color: #ff3b30;
+  border-color: #ff3b30;
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+.badge-beta {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #ff9500;
+  color: #fff;
+  vertical-align: middle;
+  margin-left: 6px;
+  letter-spacing: 0.04em;
+}
+.glossary-delete-domain-btn:hover { background: #fff5f5; }
+
+/* v1.5.6: 中國用語黑名單表格——禁用詞 / 替換詞欄位寬度收窄，
+   讓備註欄能拿到剩餘空間（中英文混雜的說明往往較長）。 */
+.forbidden-col-word { width: 22%; }
+
+/* v1.5.8: 備註欄 input focus 時浮起放寬，編輯時看得到完整內容。
+   未 focus 時維持單行欄寬，過長文字截斷（hover tooltip 看完整）。 */
+.ft-note-cell {
+  position: relative;
+}
+.ft-note:focus {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: auto;
+  /* 至少撐到能看到一段完整中英文混雜備註，但不超出 viewport */
+  min-width: 380px;
+  max-width: min(600px, 80vw);
+  padding: 8px 10px;
+  background: var(--bg-container);
+  color: var(--text-main);
+  border: 1px solid var(--accent-primary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  z-index: 10;
+}
+
+/* v1.4.13: 翻譯快捷鍵三張 preset card */
+.preset-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.preset-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--bg-card);
+}
+/* v1.6.14: 主要預設視覺強化——珊瑚邊 + 淡珊瑚底突顯 */
+.preset-card-primary {
+  border: 2px solid var(--accent-primary);
+  background: var(--accent-subtle-bg);
+  box-shadow: 0 2px 8px rgba(215, 75, 75, 0.12);
+}
+.preset-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+.preset-card-header strong { color: var(--text-main); }
+.preset-card-primary .preset-card-header strong { color: var(--accent-primary); font-size: 15px; }
+
+/* v1.6.14: per-model 計價覆蓋表（Gemini 分頁） */
+.model-pricing-overrides {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.model-pricing-row {
+  display: grid;
+  grid-template-columns: 1fr 110px 110px 90px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+.model-pricing-label strong { display: block; font-size: 14px; color: var(--text-main); }
+.model-pricing-label small { display: block; margin-top: 2px; font-size: 12px; color: var(--text-muted); }
+.model-pricing-label small.model-id { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.model-pricing-row input[type="number"] {
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+  background: var(--bg-input);
+  color: var(--text-main);
+}
+/* 自訂快速鍵 recorder（preset card header 右上角）。固定總寬讓三張 card 對齊。 */
+.shortcut-controls {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 138px;
+  width: 138px;
+}
+.shortcut-recorder {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--text-main);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.shortcut-recorder:hover { border-color: var(--accent-primary); }
+/* 顯示內建預設值（尚未自訂）時降灰,與「已自訂」黑字雙態區分 */
+.shortcut-recorder.is-default { color: var(--text-muted); }
+/* 錄製中:品牌色 ring(不填色,維持 WYSIWYG 按鈕 active 慣例) */
+.shortcut-recorder.recording {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(215, 75, 75, 0.25);
+  color: var(--accent-primary);
+}
+/* 驗證被拒:紅框 + 抖動,明顯提示(Safari 按 ⌥／⌘ 等) */
+.shortcut-recorder.invalid {
+  border-color: #ff3b30;
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.18);
+  color: #ff3b30;
+  animation: sk-shake 0.32s ease;
+}
+@keyframes sk-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+.shortcut-clear {
+  flex: 0 0 26px;
+  height: 28px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.shortcut-clear:hover { border-color: var(--accent-primary); color: var(--text-main); }
+.shortcut-clear:disabled { opacity: 0.35; cursor: default; }
+.shortcut-clear:disabled:hover { border-color: var(--border); color: var(--text-muted); }
+/* 錄製驗證失敗原因。空字串時不撐空間 */
+/* 驗證失敗提示:明顯(amber 底色塊 + ⚠,非僅一行小字)。空字串時不撐空間 */
+#shortcut-hint {
+  margin: 8px 0 0;
+  min-height: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #92400e; /* amber-800,警告語意 */
+}
+#shortcut-hint:not(:empty) {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #fff7ed; /* amber-50 */
+  border: 1px solid #fed7aa; /* amber-200 */
+}
+.preset-card label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.preset-card label:last-child { margin-bottom: 0; }
+.preset-card input[type="text"],
+.preset-card select {
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-main);
+}
+.preset-card select {
+  appearance: auto;
+}
+.preset-model-label[hidden] { display: none !important; }
+
+/* v1.5.0: 雙語對照視覺標記設定 */
+/* v1.8.31: 並排 light / dark 兩個預覽 box */
+.dual-demo-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 12px 0;
+}
+.dual-demo {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.dual-demo-light {
+  background: #ffffff;
+  border-color: #d0d7de;
+}
+.dual-demo-dark {
+  background: #1c2833;
+  border-color: #475F77;
+}
+.dual-demo-label {
+  font-size: 11px;
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+}
+.dual-demo-light .dual-demo-label { color: #6b8296; }
+.dual-demo-dark  .dual-demo-label { color: #9cb1c4; }
+
+.dual-demo .dual-demo-original {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.dual-demo-light .dual-demo-original { color: #22313f; }
+.dual-demo-dark  .dual-demo-original { color: #DCDDD8; }
+
+.dual-demo .dual-demo-translation {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.dual-demo-light .dual-demo-translation { color: #22313f; }
+.dual-demo-dark  .dual-demo-translation { color: #DCDDD8; }
+
+/* wrapper 樣式：與 content-inject.js ensureDualWrapperStyle 注入到頁面的 CSS 對齊。
+   這份是給 options 頁的 demo 預覽用，不影響真實網頁的 wrapper。 */
+shinkansen-translation {
+  display: block;
+  margin-top: 0.25em;
+  box-sizing: border-box;
+}
+:where(h1, h2, h3, h4, h5, h6) + shinkansen-translation { margin-top: 0.5em; }
+/* light (default / auto) */
+shinkansen-translation[data-sk-mark="tint"]   { background-color: #FFF8E1; padding: 4px 8px; border-radius: 4px; }
+shinkansen-translation[data-sk-mark="bar"]    { border-left: 3px solid #9CA3AF; padding-left: 8px; }
+shinkansen-translation[data-sk-mark="dashed"] { text-decoration: underline wavy #C7CDD3; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+shinkansen-translation[data-sk-mark="none"]   {}
+/* dark (default / auto) — v1.8.52 加強對比解 issue #35 */
+shinkansen-translation[data-sk-mark="tint"][data-sk-theme="dark"]   { background-color: rgba(255, 255, 255, 0.14); }
+shinkansen-translation[data-sk-mark="bar"][data-sk-theme="dark"]    { border-left-color: #B7BDC4; }
+shinkansen-translation[data-sk-mark="dashed"][data-sk-theme="dark"] { text-decoration-color: #B7BDC4; }
+/* v1.8.52: 自訂強調色(token / hex)— inline style 提供 --sk-accent-rgb */
+shinkansen-translation[data-sk-accent="custom"][data-sk-mark="tint"]   { background-color: rgb(var(--sk-accent-rgb) / 0.15); }
+shinkansen-translation[data-sk-accent="custom"][data-sk-mark="tint"][data-sk-theme="dark"] { background-color: rgb(var(--sk-accent-rgb) / 0.22); }
+shinkansen-translation[data-sk-accent="custom"][data-sk-mark="bar"]    { border-left-color: rgb(var(--sk-accent-rgb)); }
+shinkansen-translation[data-sk-accent="custom"][data-sk-mark="dashed"] { text-decoration-color: rgb(var(--sk-accent-rgb)); }
+
+.dual-mark-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 10px;
+}
+.dual-mark-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-main);
+  cursor: pointer;
+}
+.dual-mark-options input[type="radio"] {
+  margin: 0;
+}
+
+/* v1.8.52: 強調色 swatch row + 自訂 hex
+   active 樣式用 2px ring(box-shadow，不疊在色塊裡)— CLAUDE.md UI 指引
+   要求 WYSIWYG 按鈕群 active 不填色,色塊本身就是預覽。 */
+.dual-accent-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  margin-bottom: 10px;
+}
+.dual-accent-row .accent-label {
+  font-size: 13px;
+  color: var(--text-main);
+  margin-right: 4px;
+}
+.dual-accent-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  transition: box-shadow 0.12s;
+  flex: 0 0 auto;
+}
+.dual-accent-swatch:focus { outline: none; }
+.dual-accent-swatch:focus-visible,
+.dual-accent-swatch.is-active {
+  box-shadow: 0 0 0 2px var(--accent-primary);
+}
+.dual-accent-swatch[data-token="auto"] {
+  background:
+    linear-gradient(135deg,
+      #FFF8E1 0%, #FFF8E1 33%,
+      #C7CDD3 33%, #C7CDD3 66%,
+      #9CA3AF 66%, #9CA3AF 100%);
+}
+.dual-accent-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* 不另加 margin-left,讓 swatch row 自身的 gap(10px)定中間距,避免雙重間距 */
+}
+.dual-accent-custom-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.dual-accent-custom input[type="color"] {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.dual-accent-custom input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.dual-accent-custom input[type="color"]::-webkit-color-swatch { border: none; border-radius: 50%; }
+.dual-accent-custom input[type="text"] {
+  width: 84px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-main);
+}
+.dual-accent-custom input[type="text"][aria-invalid="true"] {
+  border-color: #ff3b30;
+}
+
+/* v1.8.41：金額顯示幣值 radio */
+.currency-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 10px;
+}
+.currency-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-main);
+  cursor: pointer;
+}
+.currency-options input[type="radio"] {
+  margin: 0;
+}
+
+/* 懸浮按鈕大小選擇：前置 label + 兩個 radio（小 / 大）水平排列 */
+.floating-size-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 10px;
+}
+.floating-size-options > span {
+  font-size: 13px;
+  color: var(--text-main);
+}
+.floating-size-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-main);
+  cursor: pointer;
+}
+.floating-size-options input[type="radio"] {
+  margin: 0;
+}
+
+.footer-easter-egg {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 32px 0 24px;
+  font-style: italic;
+}
+
+/* v1.6.1: 一般設定分頁頂部更新提示 banner — wrapper + 內部 a + dismiss button 並列 */
+.update-banner-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.update-banner-link {
+  /* v1.6.3: 從 <a> 改 <button>——加 button reset 維持 banner 視覺 */
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(215, 75, 75, 0.08);
+  border: 1px solid rgba(215, 75, 75, 0.35);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-main);
+  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.update-banner-link:hover { background: rgba(215, 75, 75, 0.15); text-decoration: none; }
+.update-banner-link strong { color: var(--text-main); }
+.update-banner-link > span { color: var(--text-muted); }
+.update-banner-dismiss {
+  background: var(--btn-secondary-bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.update-banner-dismiss:hover {
+  background: var(--btn-secondary-hover);
+  color: var(--text-main);
+}
+/* v1.6.5: 強制覆寫 hidden attribute——display:flex 會 override 掉 user-agent
+   [hidden] { display: none }，造成 hidden=true 仍顯示的 bug。 */
+.update-banner-row[hidden] { display: none !important; }
+
+/* preset label 自 v1.8.19 起放寬到 30 字元，「工具列翻譯本頁按鈕」與
+   「自動翻譯網站使用的預設」兩個 select 的 option text 為「{slotTitle}:{label}」,
+   給 max-width 避免長 label 撐寬整個 form row（瀏覽器會自動 truncate option 顯示）。 */
+#popup-button-slot,
+#auto-translate-slot {
+  max-width: 360px;
+  width: 100%;
+}
+
+/* v1.8.19: 配額 section 進階摺疊區。預設收起，點 summary 展開內容。 */
+.advanced-details {
+  margin-top: 12px;
+  border: 1px solid var(--border-divider);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+.advanced-details > summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  list-style: none;
+}
+.advanced-details > summary::-webkit-details-marker { display: none; }
+.advanced-details > summary::before {
+  content: '▶';
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+.advanced-details[open] > summary::before { transform: rotate(90deg); }
+.advanced-details > *:not(summary) { padding-left: 12px; padding-right: 12px; }
+.advanced-details > *:last-child { padding-bottom: 12px; }
+
+/* ═══ 窄版 RWD（iPhone / 窄視窗）═══════════════════════════════
+   options.html 加 viewport meta 後 iOS layout viewport = 螢幕寬（~390pt），
+   以下收掉在 720px 桌面版面下不會暴露的橫向溢出點。一般 RWD media query，
+   不掛 body.runtime-ios——桌面視窗縮窄同樣受益，維持單一 code path */
+@media (max-width: 480px) {
+  /* 手機上 margin 40px + padding 32px 吃掉太多橫向空間 */
+  .container {
+    margin: 0;
+    padding: 20px 16px;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  /* tab 折行後一列塞得下更多顆 */
+  .tab-btn { padding: 10px 12px; }
+  /* RPM / TPM / RPD 三欄太擠 → 直疊 */
+  .triple { grid-template-columns: 1fr; }
+  .triple label { margin: 12px 0; }
+  /* 用量彙總四卡 → 2×2 */
+  .usage-summary { grid-template-columns: 1fr 1fr; }
+  /* per-model 計價列：固定欄 110+110+90 必溢出 → label 整列 + 三個數字欄一列 */
+  .model-pricing-row { grid-template-columns: 1fr 1fr 1fr; }
+  .model-pricing-label { grid-column: 1 / -1; }
+  /* 雙語對照 light / dark 預覽並排太窄 → 直疊 */
+  .dual-demo-pair { grid-template-columns: 1fr; }
+  /* 日週月按鈕＋搜尋框＋模型 select 同列塞不下 → 允許折行 */
+  .usage-search-row { flex-wrap: wrap; }
+  .usage-search-row input[type="text"] { flex: 1 1 140px; }
+  .usage-search-row select { width: auto; min-width: 0; flex: 1 1 auto; }
+  /* 術語表網域 select（min-width 180）＋ input ＋按鈕同列塞不下 → 折行 */
+  .glossary-domain-controls { flex-wrap: wrap; }
+  .glossary-domain-controls select { flex: 1 1 100%; min-width: 0; }
+  /* 備註欄 focus 浮起的 min-width 380px 超出螢幕 */
+  .ft-note:focus { min-width: 0; }
+  /* 明細分頁：page-info min-width 200px 把「上一頁／下一頁」擠到逐字直排 */
+  .usage-pagination { gap: 8px; }
+  .usage-pagination .usage-page-info { min-width: 0; flex: 1 1 auto; }
+  .usage-pagination button { white-space: nowrap; }
+  /* 多欄表格（用量明細 / Debug log）窄版擠不下 → 橫向捲動 */
+  .usage-table-wrapper,
+  .log-table-wrapper { overflow-x: auto; }
+}
+
+/* iPhone 限定：iOS Safari 對 font-size < 16px 的輸入框會在 focus 時自動放大
+   頁面（且不會自動縮回），設定頁到處是 13px input → 每點一個欄位就跳一次 zoom。
+   把表單控制項字級拉到 16px 關掉這個行為。掛 body.runtime-ios（iOS build 才有，
+   見 options.js）＋窄版 media query，桌面與 iPad 版面不受影響 */
+@media (max-width: 480px) {
+  body.runtime-ios input[type="text"],
+  body.runtime-ios input[type="password"],
+  body.runtime-ios input[type="number"],
+  body.runtime-ios input[type="date"],
+  body.runtime-ios select,
+  body.runtime-ios textarea {
+    font-size: 16px;
+  }
+  /* 字級拉到 16px 後固定 130px 放不下完整日期 */
+  body.runtime-ios .usage-date-label input[type="date"] { width: 150px; }
+}
+
+/* 透明度設定的即時範例（懸浮按鈕 / toast 通知）。decorative，aria-hidden，
+   opacity 由 options.js _render*OpacityLabel 跟著 slider 即時套用。 */
+/* 透明度 slider 列：文字 / slider / 說明垂直置中。label 文字固定寬，避免
+   50% / 100% 位數變動讓 slider 起點左右跳（CLAUDE.md §1 固定 width 原則）。 */
+label.opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+label.opacity-row > span[id$="OpacityLabelWrap"] {
+  flex: 0 0 auto;
+  width: 132px;
+}
+label.opacity-row input[type="range"] {
+  flex: 0 0 200px;
+  margin: 0;
+}
+label.opacity-row small {
+  flex: 1 1 130px;
+  min-width: 0;
+  margin: 0;
+}
+
+.opacity-demo {
+  /* 範例與 slider 同列、垂直置中（align-items: center）。label 文字固定寬，
+     slider 起點不被推歪；範例排在 slider 之後。 */
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  transition: opacity .1s ease;
+}
+.opacity-demo img { display: block; }
+.toast-demo-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg-card);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.18);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+}
+.toast-demo-line {
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+}
+.toast-demo-bar {
+  width: 30px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent-primary);
+}
+

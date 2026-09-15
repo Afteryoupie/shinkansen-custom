@@ -1,0 +1,26 @@
+{
+  "extName": {
+    "message": "Shinkansen Custom",
+    "description": "Extension name"
+  },
+  "extDescription": {
+    "message": "Fast, smooth web page & YouTube subtitle translation. 8 target languages, multiple AI engines, data stays local."
+  },
+  "actionTitle": {
+    "message": "Shinkansen Custom Translate",
+    "description": "工具列圖示 tooltip（manifest action.default_title）"
+  },
+  "cmdTranslateMain": {
+    "message": "Translate this page — main preset",
+    "description": "快速鍵說明（chrome://extensions/shortcuts）"
+  },
+  "cmdTranslatePreset2": {
+    "message": "Translate this page — preset 2"
+  },
+  "cmdTranslatePreset3": {
+    "message": "Translate this page — preset 3"
+  },
+  "cmdSendInstapaper": {
+    "message": "Send to Instapaper"
+  }
+}

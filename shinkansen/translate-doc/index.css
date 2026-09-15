@@ -1,0 +1,1772 @@
+/* Shinkansen — translate-doc 頁面樣式
+ * 視覺基調對齊 options.css / popup.css（石板海軍珊瑚配色 白色版 / 深色版） */
+
+:root {
+  /* 🎨 石板海軍珊瑚 (Slate & Coral) 核心色票 */
+  --color-slate-dark: #354B5E;
+  --color-steel-blue: #475F77;
+  --color-ivory-white: #DCDDD8;
+  --color-coral-red: #D74B4B;
+
+  /* ☀️ 白色版 (Light Slate & Coral) */
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-soft: #f3f5f6;
+  --bg-zone: #f8fafb;
+  --text: #22313f;
+  --text-muted: #475F77;
+  --text-faint: #7a8e9f;
+  --border: #d0d7de;
+  --border-strong: #475F77;
+  --primary: #D74B4B;
+  --primary-hover: #c43f3f;
+  --primary-soft: rgba(215, 75, 75, 0.08);
+  --error-bg: #fff1f0;
+  --error-text: #c1312b;
+  --radius: 10px;
+  --shadow-soft: 0 1px 3px rgba(53, 75, 94, 0.06);
+  --font: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+}
+
+/* 🌙 深色版 (Dark Slate & Coral) */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1c2833;
+  --bg-soft: #273746;
+  --bg-zone: #243443;
+  --text: #DCDDD8;
+  --text-muted: #9cb1c4;
+  --text-faint: #6b8296;
+  --border: #475F77;
+  --border-strong: #5a738e;
+  --primary: #D74B4B;
+  --primary-hover: #e05e5e;
+  --primary-soft: rgba(215, 75, 75, 0.16);
+  --error-bg: #3d1a1e;
+  --error-text: #D74B4B;
+  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #1c2833;
+    --bg-soft: #273746;
+    --bg-zone: #243443;
+    --text: #DCDDD8;
+    --text-muted: #9cb1c4;
+    --text-faint: #6b8296;
+    --border: #475F77;
+    --border-strong: #5a738e;
+    --primary: #D74B4B;
+    --primary-hover: #e05e5e;
+    --primary-soft: rgba(215, 75, 75, 0.16);
+    --error-bg: #3d1a1e;
+    --error-text: #D74B4B;
+    --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 頁首縮窄（2026-07-11 Jimmy 需求）：原 24px 上 padding + 22px 字 + 32px icon
+   對內容頁是垂直空間浪費,壓成單薄一條 */
+.app-header {
+  padding: 8px 40px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+
+.app-header h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.app-icon {
+  width: 20px;
+  height: 20px;
+}
+
+#app-main {
+  flex: 1;
+  padding: 32px 40px;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.stage[hidden] { display: none !important; }
+
+/* ----- 上傳區 ----- */
+
+.dropzone {
+  background: var(--bg-zone);
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 56px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dropzone:hover,
+.dropzone:focus,
+.dropzone.dragover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  outline: none;
+}
+
+.dropzone-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.dropzone-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.dropzone-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.constraints {
+  display: flex;
+  gap: 16px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.constraint-item {
+  flex: 1 1 240px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.constraint-label {
+  color: var(--text-muted);
+}
+
+.constraint-value {
+  font-weight: 600;
+}
+
+.privacy-note {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--primary-soft);
+  border: 1px solid rgba(0, 113, 227, 0.18);
+  border-radius: var(--radius);
+}
+
+.privacy-note-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary);
+  margin-bottom: 4px;
+}
+
+.privacy-note-detail {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.error-banner {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--error-bg);
+  color: var(--error-text);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+
+/* ----- 解析中 ----- */
+
+#stage-parsing {
+  text-align: center;
+  padding: 40px 0;
+}
+
+.parsing-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.spinner-ring {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border-strong);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.parsing-text {
+  text-align: left;
+}
+
+.parsing-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.parsing-detail {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ----- 解析完成 ----- */
+
+#stage-result {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+}
+
+.result-title {
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.result-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 顯式 display:flex 蓋掉 UA 的 [hidden]（本頁已踩多次的同款陷阱）——
+   累計費用 row 未有費用前必須真的隱藏 */
+.result-row[hidden] { display: none !important; }
+
+.result-row:last-child {
+  border-bottom: none;
+}
+
+.result-row span:first-child {
+  color: var(--text-muted);
+  white-space: nowrap;        /* 「檔名」這類 2 字 label 不要被擠到折行 */
+  flex-shrink: 0;
+}
+
+.result-row span:last-child {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  margin-left: 12px;
+  word-break: break-all;       /* 長檔名(右側值)允許在英數中間斷行 */
+}
+
+/* 翻譯頁數範圍(result-row 內的右側值區)。.result-row span:last-child 的
+   font-weight / tabular-nums 由 .page-range 內的 input 自己繼承即可 */
+.page-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.page-range-input {
+  width: 56px;                 /* 4 位數頁碼 + spinner 放得下 */
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.page-range-sep {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.page-range-all-btn {
+  margin-left: 2px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.page-range-all-btn:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.result-hint {
+  margin: 12px 0 20px;
+  padding: 10px 14px;
+  background: var(--primary-soft);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.result-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ----- 按鈕 ----- */
+
+/* display: inline-block 會蓋掉 UA 的 [hidden] display:none（本頁已踩三次的
+ * 同款 bug：.epub-output-format / .g-opt / 這裡），按鈕類直接通殺補回 */
+.primary-btn[hidden],
+.secondary-btn[hidden] { display: none !important; }
+
+.primary-btn,
+.secondary-btn {
+  display: inline-block;
+  padding: 9px 18px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.primary-btn {
+  background: var(--primary);
+  color: #fff;
+}
+
+.primary-btn:hover {
+  background: var(--primary-hover);
+}
+
+.secondary-btn {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.secondary-btn:hover {
+  background: var(--bg-soft);
+}
+
+/* ----- 翻譯中(W3) ----- */
+
+#stage-translating {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+}
+
+.translate-progress-wrap {
+  margin: 16px 0 20px;
+}
+
+.translate-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.translate-progress-fill {
+  height: 100%;
+  background: var(--primary);
+  width: 0;
+  transition: width 0.3s;
+}
+
+.translate-progress-meta {
+  display: flex;
+  gap: 18px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.translate-progress-failed {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: var(--error-bg);
+  color: var(--error-text);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+/* ----- 翻譯紀錄 modal ----- */
+
+.summary-dialog {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  min-width: 360px;
+  max-width: 480px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
+.summary-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.summary-dialog .result-title {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.summary-dialog .result-actions {
+  margin-top: 16px;
+  justify-content: flex-end;
+  flex-wrap: wrap; /* dialog 寬度不夠時整個 button 換行,而不是文字內折行 */
+}
+
+/* dialog 內按鈕文字不可內部折行(wrap container 整顆換行可以) */
+.summary-dialog .result-actions button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.settings-section {
+  margin-bottom: 16px;
+}
+
+.settings-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.settings-preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: border-color 0.1s, background 0.1s;
+}
+
+.settings-preset-row:hover {
+  background: var(--bg-soft);
+}
+
+.settings-preset-row input[type="radio"] {
+  margin: 0;
+}
+
+.settings-preset-row.is-selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.settings-preset-row .preset-engine {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-hint {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-checkbox-row input[type="checkbox"] {
+  margin: 0;
+}
+
+/* ----- 雙頁並排閱讀器(W4) ----- */
+
+#app-main:has(#stage-reader:not([hidden])) {
+  max-width: 100%;
+  padding: 0;
+}
+
+/* reader 模式下隱藏 app-header(視覺上工具欄取代成 page 頂部)，撐滿預覽面積 */
+body:has(#stage-reader:not([hidden])) .app-header,
+body:has(#stage-reader:not([hidden])) .app-footer {
+  display: none;
+}
+
+#stage-reader {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.reader-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+/* 兩端 spacer 把中間元素群推置中,download PDF 在 spacer 後保持最右 */
+.reader-toolbar-spacer { flex: 1; }
+
+/* reader-toolbar 內 button 變窄一些，工具欄高度縮小 */
+.reader-toolbar .primary-btn,
+.reader-toolbar .secondary-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+/* 「翻譯紀錄」按鈕在有失敗段時加橘邊 + 文字色強調,提醒使用者進去查看 / 重試 */
+#reader-summary-btn.has-failed-alert {
+  border-color: #f97316;
+  color: #c2410c;
+  background: #fff7ed;
+}
+
+#reader-summary-btn.has-failed-alert:hover {
+  background: #ffedd5;
+}
+
+.reader-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  min-height: 0;
+}
+
+.reader-zoom-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reader-zoom-group button {
+  padding: 2px 10px;
+  min-width: 32px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.reader-zoom-level {
+  display: inline-block;
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.reader-col {
+  position: relative;  /* 讓內部 reader-page 的 offsetParent = reader-col,scroll sync 計算正確 */
+  overflow-y: auto;
+  background: var(--bg-soft);
+  padding: 16px;
+}
+
+.reader-col-original {
+  border-right: 1px solid var(--border);
+}
+
+.reader-page {
+  background: #fff;
+  margin: 0 auto 16px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  position: relative;
+}
+
+.reader-page-original {
+  /* 由 reader.js 設 width / height，保持原 PDF 比例 */
+  line-height: 0;
+}
+
+.reader-page-original canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.reader-page-translated {
+  /* 譯文 page = canvas(底層原 PDF render bitmap)+ absolute overlay 譯文 div */
+  position: relative;
+}
+
+.reader-page-translated canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* WYSIWYG mode (2026-05-05 起):右欄改用 PDF.js render 譯文 PDF 到 canvas,
+   不再走 HTML overlay。原 .reader-translated-overlay / .reader-block / 各
+   block-type / .reader-block-retry / .reader-block-translating 等 class
+   全部移除 */
+
+.reader-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+/* ----- debug overlay（W2 視覺化先行） ----- */
+
+#stage-debug {
+  /* debug 階段不被 #app-main 的 max-width: 720px 限制——overlay 要對著 canvas
+     原始尺寸顯示，寬大頁(A4 横放、雜誌)需要更寬視口。提升 main 的 max-width。 */
+  max-width: 100%;
+}
+
+#app-main:has(#stage-debug:not([hidden])) {
+  max-width: 1280px;
+}
+
+.debug-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.debug-toolbar-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.debug-toolbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.debug-toolbar-toggle input {
+  margin: 0;
+}
+
+.debug-page-indicator {
+  font-size: 13px;
+  color: var(--text-muted);
+  min-width: 110px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+#debug-prev,
+#debug-next {
+  padding: 4px 12px;
+  font-size: 14px;
+  min-width: 40px;
+}
+
+#debug-prev:disabled,
+#debug-next:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.debug-stats {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.debug-viewport-wrap {
+  display: flex;
+  justify-content: center;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  overflow: auto;
+  max-height: calc(100vh - 240px);
+}
+
+.debug-viewport {
+  position: relative;
+  display: inline-block;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  line-height: 0;
+}
+
+.debug-viewport canvas {
+  display: block;
+}
+
+.debug-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.debug-block-group {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.debug-block-rect {
+  fill-opacity: 0.12;
+  stroke-width: 1.5;
+  transition: fill-opacity 0.1s, stroke-width 0.1s;
+}
+
+.debug-block-group:hover .debug-block-rect,
+.debug-block-group.is-active .debug-block-rect {
+  fill-opacity: 0.22;
+  stroke-width: 2;
+}
+
+.debug-block-label-bg {
+  stroke-width: 0.6;
+}
+
+.debug-block-label {
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.debug-detail {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text);
+  min-height: 60px;
+  max-height: 200px;
+  overflow-y: auto;
+  line-height: 1.55;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+}
+
+.debug-detail-empty {
+  color: var(--text-faint);
+}
+
+.debug-detail-id {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-right: 8px;
+}
+
+.debug-detail-meta {
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+.debug-isolate-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+#debug-isolate-input {
+  width: 56px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.debug-color-select {
+  padding: 2px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.debug-type-legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.debug-type-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.debug-type-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid currentColor;
+}
+
+/* ----- 階段 5：譯文編輯（v1.8.49）----- */
+
+body:has(#stage-edit:not([hidden])) .app-header,
+body:has(#stage-edit:not([hidden])) .app-footer {
+  display: none;
+}
+
+#stage-edit {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.edit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.edit-toolbar-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.edit-toolbar-spacer { flex: 1; }
+
+.edit-help {
+  padding: 8px 16px;
+  background: #fffbeb;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text);
+  flex-shrink: 0;
+  line-height: 1.6;
+}
+
+.edit-help code {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 11px;
+  margin: 0 2px;
+}
+
+.edit-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 24px 40px;
+  background: var(--bg);
+}
+
+.edit-page-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0.5px;
+  margin: 20px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.edit-page-header:first-child { margin-top: 0; }
+
+.edit-block {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.edit-block--failed .edit-translation-wrap {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+
+.edit-original {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* textarea + overlay 雙層結構:wrap 控制邊框 / 圓角 / 背景,overlay 跟 textarea 共用
+ * 同 padding / font / line-height,文字內容必須一字不差(包含換行)overlay 才能對齊
+ * textarea 內字元位置。textarea 文字維持正常顯示,overlay 文字 transparent 只顯示
+ * <mark> 背景(高亮 match)。scroll 由 JS 同步 overlay.scrollTop = textarea.scrollTop */
+.edit-translation-wrap {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.edit-translation-wrap:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.edit-translation-wrap.edit-translation-wrap--current {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.edit-highlight-overlay {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+  z-index: 0;
+}
+
+.edit-highlight-overlay mark {
+  background: rgba(252, 211, 77, 0.5);
+  color: transparent;
+  padding: 0;
+  border-radius: 2px;
+}
+
+.edit-highlight-overlay mark.is-current {
+  background: rgba(251, 146, 60, 0.75);
+}
+
+.edit-translation {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.55;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: vertical;
+  min-height: 60px;
+  color: var(--text);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.edit-translation:focus { outline: none; }
+
+.edit-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.edit-find-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap; /* 視窗太窄時換行,避免按鈕被擠扁 */
+}
+
+/* find-bar 內所有 button 不被 flex 擠壓,文字不換行 */
+.edit-find-bar button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.edit-find-input {
+  flex: 0 1 180px;
+  min-width: 100px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.edit-find-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.edit-find-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: center;
+}
+
+.edit-find-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-strong);
+  margin: 0 4px;
+}
+
+/* v1.8.49 起 ring 改在 .edit-translation-wrap 上(雙層結構),此 class 保留向後相容但已停用 */
+
+/* ----- 階段 6：文章術語表編輯（v1.8.49）----- */
+
+#app-main:has(#stage-glossary:not([hidden])) {
+  max-width: 100%;
+  padding: 0;
+}
+
+body:has(#stage-glossary:not([hidden])) .app-header,
+body:has(#stage-glossary:not([hidden])) .app-footer {
+  display: none;
+}
+
+/* stage 自己當 scroll 容器(scrollbar 在最右,toolbar/help/table 三者右邊緣自然對齊),
+ * 不再 flex column + table-wrap 內部 scroll(那會讓 scrollbar 佔掉 table 右側 ~15px,
+ * 跟 toolbar / help-bar 邊緣對不齊) */
+#stage-glossary {
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.glossary-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  /* sticky 在 stage scroll 視口頂部,使用者捲動時 toolbar 不消失 */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+/* toolbar 內 button 不被 flex 擠壓,文字不內部折行(視窗極窄時 wrap 整顆) */
+.glossary-toolbar button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.glossary-toolbar-title { font-weight: 600; font-size: 14px; flex-shrink: 0; }
+
+.glossary-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.glossary-table-wrap {
+  /* 不再自己 scroll,scroll 由 #stage-glossary 統一處理(避免內部 scrollbar 偏移右邊緣) */
+  padding: 16px 16px 40px;
+}
+
+/* 1 entry per row(回退兩欄式 grid)。寬螢幕下 source / target 欄位變寬只是給長
+ * 術語更多顯示空間,不增加 entry 密度——使用者反映兩欄資訊太密 */
+.glossary-grid {
+  display: grid;
+  /* v2.0.11：加「選項」欄（不翻譯 / 對照一次 toggle） */
+  grid-template-columns: 1fr 1fr minmax(150px, auto) 70px;
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.g-header {
+  font-weight: 600;
+  padding: 8px 4px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border-strong);
+  /* 不再 sticky:scroll 容器改成 #stage-glossary 後,sticky 會跟 toolbar 衝撞 top:0 */
+}
+
+.g-header-action { padding: 8px 0; }
+
+/* secondary header 是雙欄佈局時的右半 header,單欄佈局永遠隱藏 */
+.g-header-secondary { display: none; }
+
+.glossary-grid input[type="text"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.glossary-grid input[type="text"]:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.glossary-row-delete {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--font);
+}
+
+.glossary-row-delete:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.glossary-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+/* loading / empty state 跨整列(grid auto rows 預設 fill all columns) */
+.glossary-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 30px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.glossary-state.is-empty { color: var(--text-faint); }
+.glossary-state.is-loading { font-style: italic; }
+
+/* ----- footer ----- */
+
+.app-footer {
+  padding: 12px 40px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+/* ============ EPUB 章節選翻（v2.0.11） ============ */
+.chapters-select-actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+/* 顯式 display:flex 蓋掉 UA 的 [hidden]（本頁同款陷阱第 N 次）——
+   單章文件（txt / html / 無標題 md，v2.0.87）不出章節勾選 UI */
+.chapters-select-actions[hidden],
+.chapters-list[hidden] { display: none !important; }
+.chapters-list {
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+  margin-bottom: 14px;
+}
+.chapter-row {
+  display: grid;
+  grid-template-columns: 1fr 72px 84px 96px 64px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border, #eee);
+  font-size: 13px;
+}
+.chapter-row:last-child { border-bottom: none; }
+.chapter-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+.chapter-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chapter-title.is-matter { opacity: 0.55; }
+.chapter-chars, .chapter-cost {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, #777);
+}
+.chapter-status { text-align: center; color: var(--muted, #777); }
+.chapter-status[data-state="done"] { color: #1a7f37; }
+.chapter-status[data-state="failed"] { color: #c62828; }
+.chapter-status[data-state="partial"] { color: #b26a00; }
+.chapter-preview-btn {
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+/* 單章譯文預覽 */
+.epub-preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+/* 預覽頂欄凍結（2026-07-11 Jimmy 需求）：長書捲到中段仍能返回 / 搜尋取代。
+   sticky 底色蓋住滑到下方的內文;整組元件縮小壓低佔用高度 */
+.epub-preview-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  padding: 8px 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.epub-preview-sticky .secondary-btn {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.epub-preview-sticky .g-opt {
+  font-size: 13px;
+}
+/* 標題獨立成行（不跟返回按鈕擠同一列，2026-07-10 Jimmy 回報）；
+   sticky 縮小版:字級降、單行截斷,長章節名不撐高凍結欄 */
+#epub-preview-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 掃描頁 sticky 標題:固定短字串,與按鈕同列不會撐高（預覽頁章節名可長,
+   維持獨立行;兩者刻意不同,見 2026-07-10 / 07-11 兩筆需求） */
+.scan-sticky .scan-sticky-title {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.3;
+}
+.scan-sticky .epub-preview-toolbar {
+  margin-bottom: 0;
+}
+.epub-preview-content {
+  max-width: 720px;
+  margin: 0 auto;
+  line-height: 1.8;
+  font-size: 15px;
+}
+.epub-preview-block[data-state="pending"],
+.epub-preview-block[data-state="cancelled"] { opacity: 0.45; }
+.epub-preview-block[data-state="failed"] {
+  opacity: 0.7;
+  border-left: 3px solid #c62828;
+  padding-left: 8px;
+}
+
+/* ============ 術語表選項欄 + EPUB 預覽編輯（v2.0.11） ============ */
+.g-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.g-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* display 顯式值會蓋掉 UA 的 [hidden]（同 .epub-output-format 的教訓），顯式補回 */
+.g-opt[hidden],
+.g-dedupe-keep[hidden] { display: none !important; }
+.g-opt input[type="checkbox"] { margin: 0; }
+.g-dedupe-keep {
+  font-size: 12px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+.glossary-grid input[type="text"]:disabled { opacity: 0.5; }
+
+/* 章節清單的動作列項目多，允許整顆換行、禁止按鈕 / label 內部折行直排 */
+#stage-chapters .result-actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+#stage-chapters .result-actions button { white-space: nowrap; }
+
+.epub-output-format {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+/* display: inline-flex 會蓋掉 UA 的 [hidden] display:none(同 options 頁踩過的
+ * 死按鈕 bug），必須顯式補回 */
+.epub-output-format[hidden] { display: none !important; }
+.epub-output-format select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* 預覽段落可編輯：hover / focus 給邊界提示，編輯過的段落左緣標記 */
+.epub-preview-block[contenteditable="true"]:hover {
+  outline: 1px dashed var(--border-strong, #bbb);
+  outline-offset: 4px;
+}
+.epub-preview-block[contenteditable="true"]:focus {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 4px;
+}
+.epub-preview-block.is-edited {
+  border-left: 3px solid var(--primary, #2563eb);
+  padding-left: 8px;
+}
+
+/* ============ 第三批（2026-07-10）：分組 / 本書禁用詞 / 全書預覽搜尋取代 ============ */
+.glossary-group-header {
+  grid-column: 1 / -1;
+  font-weight: 600;
+  padding: 12px 4px 4px;
+  border-bottom: 1px solid var(--border-strong);
+}
+.glossary-person-toggle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 12px;
+}
+/* 對齊 .glossary-table-wrap 的水平內距（16px），並給頁尾留白——
+ * 區塊在 wrap 外面，沒補內距會貼齊左緣與下緣（2026-07-10 Jimmy 回報） */
+.book-forbidden-section {
+  margin-top: 12px;
+  padding: 0 16px 48px;
+}
+.book-forbidden-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 70px;
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+.book-forbidden-grid input[type="text"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+.epub-sr-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  flex-wrap: wrap;
+}
+.epub-sr-bar input {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font);
+  font-size: 13px;
+  flex: 0 1 220px;
+}
+.epub-preview-original {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: -8px 0 16px;
+  padding-left: 8px;
+  border-left: 3px solid var(--border);
+}
+.epub-preview-chapter-title {
+  margin-top: 32px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ============ 2026-07-10 第四批：分組 header toggle / 翻譯中動態提示 ============ */
+.glossary-group-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.glossary-group-header .glossary-person-toggle {
+  font-weight: 400;
+  margin-left: 0;
+}
+
+/* 翻譯中：標題旁小 spinner + 進度條 shimmer，長批次期間也有動態感（避免像當機） */
+.translating-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.spinner-ring--sm {
+  width: 22px;
+  height: 22px;
+  border-width: 2.5px;
+}
+.translate-progress-fill {
+  position: relative;
+  overflow: hidden;
+}
+.translate-progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: sk-shimmer 1.4s linear infinite;
+}
+@keyframes sk-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+/* 術語表抽取 loading 也給 spinner（全書多輪抽取 forceRefresh 後是真等待） */
+.glossary-state.is-loading::before {
+  content: '';
+  display: block;
+  width: 26px;
+  height: 26px;
+  margin: 0 auto 10px;
+  border: 3px solid var(--border-strong);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+/* 放棄本書翻譯：破壞性動作，紅字提示 */
+.chapters-discard-btn { color: #c62828; }
+.chapters-discard-btn:hover {
+  border-color: #c62828;
+  background: #fdf3f2;
+}
+
+/* 翻譯設定 dialog：Google MT preset 禁選 + 每批段數輸入（2026-07-10） */
+.settings-preset-row.is-unsupported {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.preset-unsupported-note {
+  font-size: 12px;
+  color: var(--error-text);
+  white-space: nowrap;
+}
+.settings-batch-input {
+  width: 90px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+.settings-extra-prompt {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+
+/* 術語表欄位排序 header（2026-07-10） */
+.g-header.g-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.g-header.g-sortable:hover { background: var(--border); }
+.g-sort-arrow {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--primary);
+}
+
+/* 翻譯設定 dialog 內的 checkbox label 對齊 .settings-label 字階（13px 灰）——
+ * .g-opt 在 dialog 情境繼承 body 15px 黑字，跟同區 label 不搭（2026-07-10 Jimmy 回報） */
+#translate-settings-dialog .g-opt {
+  font-size: 13px;
+  color: var(--text-muted);
+  gap: 6px;
+}
+
+/* ----- 譯後一致性掃描（v2.0.11） ----- */
+
+/* 顯式 display 蓋 [hidden] 的同款陷阱，先補 */
+.scan-findings-btn[hidden] { display: none !important; }
+
+.scan-findings-btn {
+  display: block;
+  width: 100%;
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border: 1px solid rgba(0, 113, 227, 0.18);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.scan-findings-btn:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.scan-empty {
+  padding: 24px 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.scan-section-title {
+  margin: 24px 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.scan-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.scan-case {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.scan-case-term {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.scan-rendering-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.scan-rendering-contexts {
+  margin: 0 0 8px 26px; /* 26px = radio 縮排對齊譯名文字 */
+}
+
+.scan-rendering-context {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* 譯名本體雙通道強調：字重 + 回到正文色階（周圍是 muted） */
+.scan-rendering-context strong { color: var(--text); }
+
+.scan-context-chapter {
+  margin-right: 6px;
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+
+.scan-rendering-count {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scan-case-actions {
+  margin-top: 10px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.scan-case-status {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.scan-compliance-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.scan-compliance-row:last-child { border-bottom: none; }
+
+/* 已自動替換 / 已略過列：已處理完的資訊揭露，降一階視覺權重與活動違規區隔 */
+.scan-autofixed-row,
+.scan-skipped-row {
+  color: var(--text-muted);
+}
+
+.scan-skip-undo-btn {
+  margin-left: 8px;
+}
+
+/* 待處理違規列的「輸入實際譯名」欄：固定寬（UI 指引——不讓內容撐寬度） */
+.scan-term-input {
+  width: 200px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.scan-term-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.scan-compliance-contexts {
+  margin: 4px 0 2px;
+}
+
+.scan-compliance-item {
+  margin-top: 6px;
+}
+
+.scan-excerpt-label {
+  color: var(--text-faint);
+  margin-right: 4px;
+  white-space: nowrap;
+}
