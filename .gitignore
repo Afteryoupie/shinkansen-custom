@@ -93,9 +93,12 @@ test/
 __pycache__/
 *.pyc
 *.pyo
+*.bak
 .venv/
 models/
 Models/
 *.gguf
 *.bin
 *.safetensors
+watchdog/LLMMenuBar
+LLMMenuBar

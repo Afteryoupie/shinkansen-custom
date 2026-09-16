@@ -17,6 +17,10 @@ PROJECT_DIR = PACKAGE_DIR.parent
 CANDIDATE_MODELS_DIRS = [
     PROJECT_DIR / "models",
     PROJECT_DIR / "Models",
+    PROJECT_DIR.parent.parent / "models",
+    PROJECT_DIR.parent.parent / "Models",
+    PROJECT_DIR.parent / "models",
+    PROJECT_DIR.parent / "Models",
     Path(r"C:\LLM_Project\models"),
     Path.cwd() / "models",
     Path.cwd() / "Models",
@@ -24,10 +28,15 @@ CANDIDATE_MODELS_DIRS = [
 MODELS_DIR = next((d for d in CANDIDATE_MODELS_DIRS if d.exists()), PROJECT_DIR / "models")
 
 # 虛擬環境執行檔路徑 (Windows 為 Scripts, Unix 為 bin)
-if sys.platform == "win32":
-    VENV_BIN = PROJECT_DIR / ".venv" / "Scripts"
-else:
-    VENV_BIN = PROJECT_DIR / ".venv" / "bin"
+_venv_sub = "Scripts" if sys.platform == "win32" else "bin"
+_py_exe = "python.exe" if sys.platform == "win32" else "python3"
+_candidate_venv_dirs = [
+    Path(sys.executable).parent,
+    PROJECT_DIR / ".venv" / _venv_sub,
+    PROJECT_DIR.parent.parent / ".venv" / _venv_sub,
+    PROJECT_DIR.parent / ".venv" / _venv_sub,
+]
+VENV_BIN = next((d for d in _candidate_venv_dirs if (d / _py_exe).exists()), PROJECT_DIR / ".venv" / _venv_sub)
 
 def find_llama_bin() -> Path:
     """跨平台動態尋找 llama-server 執行檔"""
@@ -39,6 +48,8 @@ def find_llama_bin() -> Path:
     candidates = [
         Path(r"C:\llama-win-vulkan-x64\llama-server.exe"),
         PROJECT_DIR / bin_name,
+        PROJECT_DIR.parent.parent / bin_name,
+        PROJECT_DIR.parent / bin_name,
         PROJECT_DIR / "llama" / bin_name,
         PROJECT_DIR / "llama-b10734" / bin_name,
         Path(os.environ.get("LOCALAPPDATA", "")) / "llama-server" / bin_name,
