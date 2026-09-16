@@ -1153,6 +1153,10 @@ const messageHandlers = {
   STICKY_QUERY: {
     async: true,
     handler: async (_, sender) => {
+      const s = await getSettingsCached();
+      // ★ 加入此行防爆判斷：若未開啟跨分頁延續，新開分頁不自動跟翻
+      if (s.crossTabSticky !== true) return { ok: true, shouldTranslate: false };
+
       await hydrateStickyTabs();
       const tabId = sender?.tab?.id;
       if (tabId == null) return { ok: true, shouldTranslate: false };

@@ -38,7 +38,8 @@ export const DELIMITER = '\n<<<SHINKANSEN_SEP>>>\n';
 // split 漏切一刀 → mismatch,且 mangled token 逃過 realign 清理與 sanitizeMarkers
 // 最後防線直接漏進 DOM 與快取。token 是協定保留字串,原文不可能合法出現任何大小寫
 // 變體,放寬無誤殺風險。
-export const SEP_RE = /\s*<<<SHINKANSEN_SEP>>>\s*/i;
+// v2.0.76: 放寬角括號數量 (1-6) 與拼寫變體（如模型幻覺輸出 <<<SHINKANAN_SEP>>>、<<<SHINKASEN_SEP>>>、<<SHINKANSEN_SEP>> 等）
+export const SEP_RE = /\s*[<«]{1,6}\s*SHIN[A-Za-z0-9_-]*_?SEP\s*[>»]{1,6}\s*/i;
 
 // 多段序號標記。為什麼有兩組:
 //   Gemini / 商用 LLM(GPT / Claude / DeepSeek 等)用緊湊的 «N»,token 開銷小。
@@ -62,10 +63,11 @@ export const MARKER_COMPACT = {
 };
 export const MARKER_STRONG = {
   // v2.0.70: 三個 regex 加 `i` — 與 SEP_RE 同因(模型偶發改寫協定 token 大小寫)
+  // v2.0.76: 放寬角括號與拼寫容錯
   fmt: (n) => `<<<SHINKANSEN_SEG-${n}>>> `,
-  re: /^<<<SHINKANSEN_SEG-\d+>>>\s*/i,
-  stripGlobalRe: /<<<SHINKANSEN_SEG-\d+>>>\s*/gi,
-  scanRe: /<<<SHINKANSEN_SEG-(\d+)>>>/i,
+  re: /^[<«]{1,6}\s*SHIN[A-Za-z0-9_-]*_?SEG-(\d+)\s*[>»]{1,6}\s*/i,
+  stripGlobalRe: /[<«]{1,6}\s*SHIN[A-Za-z0-9_-]*_?SEG-\d+\s*[>»]{1,6}\s*/gi,
+  scanRe: /[<«]{1,6}\s*SHIN[A-Za-z0-9_-]*_?SEG-(\d+)\s*[>»]{1,6}/i,
   display: '<<<SHINKANSEN_SEG-N>>>',
 };
 
@@ -134,10 +136,10 @@ function sanitizeTermText(s) {
     // 配對 / 自閉合佔位符 token(防止使用者輸入誤觸發佔位符規則)
     .replace(/⟦\/?\*?\d+⟧/g, '')
     // 多段 sentinel(防止假冒批次切分標記)
-    .replace(/<<<SHINKANSEN_SEP>>>/gi, '')
+    .replace(/[<«]{1,6}\s*SHIN[A-Za-z0-9_-]*_?SEP\s*[>»]{1,6}/gi, '')
     // 多段序號標記兩種格式都 strip(防止假冒段序號;«\d+» 只匹配數字所以法文 / 德文
     // 引號 «bonjour» 不會誤傷)
-    .replace(/<<<SHINKANSEN_SEG-\d+>>>/gi, '')
+    .replace(/[<«]{1,6}\s*SHIN[A-Za-z0-9_-]*_?SEG-\d+\s*[>»]{1,6}/gi, '')
     .replace(/«\d+»/g, '')
     // forbidden_terms_blacklist 標籤(防止使用者輸入提前關閉區塊)
     .replace(/<\/?forbidden_terms_blacklist>/gi, '')

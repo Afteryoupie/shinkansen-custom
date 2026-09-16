@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM 智慧守護代理控制台</title>
+<style>
+  :root {
+    /* 石板海軍珊瑚 (Slate & Coral) 核心色票與色彩比例 */
+    --color-slate-dark: #354B5E;  /* 39% 主基底容器 */
+    --color-steel-blue: #475F77;  /* 25% 結構層次邊框 */
+    --color-ivory-white: #DCDDD8; /* 21% 高可讀性文字 */
+    --color-coral-red: #D74B4B;   /* 15% 焦點與主要 CTA */
+
+    /* 語意化配色 */
+    --bg-root: #1c2833;
+    --bg-surface: #273746;
+    --bg-card: #354B5E;
+    --bg-input: #243443;
+    --border: #475F77;
+    --border-focus: #D74B4B;
+    --accent: #D74B4B;
+    --accent-hover: #c43f3f;
+    --accent-glow: rgba(215, 75, 75, 0.28);
+    --btn-secondary: #475F77;
+    --btn-secondary-hover: #56718d;
+    --text-primary: #DCDDD8;
+    --text-secondary: #9cb1c4;
+    --text-dim: #6b8296;
+
+    /* 狀態指示色階 */
+    --badge-ok-bg: #1d3a33;
+    --badge-ok-fg: #4ade80;
+    --badge-ok-border: #2a5a4a;
+    --badge-standby-bg: #243443;
+    --badge-standby-fg: #9cb1c4;
+    --badge-standby-border: #354b5e;
+    --green: #4ade80;
+    --amber: #f59e0b;
+    --coral: #D74B4B;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Microsoft JhengHei", Roboto, sans-serif;
+    background-color: var(--bg-root);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 36px 16px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-top: 3.5px solid var(--accent);
+    border-radius: 16px;
+    padding: 28px;
+    width: 100%;
+    max-width: 580px;
+    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+  .card-header h2 {
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .dot-green {
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s infinite;
+  }
+  .dot-amber {
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    animation: pulse 1s infinite;
+  }
+  .dot-grey {
+    background: var(--text-dim);
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(1.15); }
+  }
+  .info-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 22px;
+    font-size: 14px;
+  }
+  .info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--bg-input);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .info-label {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 13.5px;
+  }
+  .info-val {
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .code-text {
+    font-family: Consolas, "Cascadia Code", monospace;
+    color: #ffffff;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-size: 13px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .btn-copy {
+    background: var(--btn-secondary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .btn-copy:hover {
+    background: var(--btn-secondary-hover);
+    color: #ffffff;
+  }
+  .toolbar {
+    display: flex;
+    gap: 9px;
+    margin-bottom: 22px;
+  }
+  .btn {
+    flex: 1;
+    padding: 10.5px 14px;
+    border: none;
+    border-radius: 8px;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    user-select: none;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none !important;
+  }
+  .btn:not(:disabled):hover {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+  }
+  .btn:not(:disabled):active {
+    transform: translateY(0);
+  }
+  .btn-wake {
+    background: var(--accent);
+    color: #ffffff;
+    box-shadow: 0 4px 14px var(--accent-glow);
+  }
+  .btn-wake:not(:disabled):hover {
+    background: var(--accent-hover);
+  }
+  .btn-sleep {
+    background: var(--btn-secondary);
+    color: var(--text-primary);
+  }
+  .btn-sleep:not(:disabled):hover {
+    background: var(--btn-secondary-hover);
+    color: #ffffff;
+  }
+  .btn-stop {
+    background: #3d1a1e;
+    color: var(--accent);
+    border: 1px solid rgba(215, 75, 75, 0.45);
+    flex: 0 0 auto;
+  }
+  .btn-stop:not(:disabled):hover {
+    background: var(--accent-hover);
+    color: #ffffff;
+  }
+  .btn-toggle {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+  .btn-toggle.active {
+    background: rgba(74, 222, 128, 0.12);
+    border: 1px solid rgba(74, 222, 128, 0.4);
+    color: var(--green);
+  }
+  .btn-toggle.inactive {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #fbbf24;
+  }
+  .btn-refresh {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    padding: 10px 13px;
+  }
+  .btn-refresh:not(:disabled):hover {
+    background: var(--btn-secondary);
+    color: var(--text-primary);
+  }
+  .models-box {
+    background: var(--bg-card);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    padding: 16px;
+  }
+  .models-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .model-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .model-card {
+    width: 100%;
+    text-align: left;
+    padding: 11px 13px;
+    border-radius: 8px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .model-card:hover:not(:disabled):not(.active) {
+    background: #2b3d4f;
+    border-color: var(--accent);
+    color: #ffffff;
+    transform: translateY(-1px);
+  }
+  .model-card.active {
+    background: rgba(215, 75, 75, 0.12);
+    border: 2px solid var(--accent);
+    color: #ffffff;
+    cursor: default;
+  }
+  .tag {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .tag-coral {
+    background: var(--accent);
+    color: #ffffff;
+  }
+  .tag-mlx { background: rgba(244, 114, 182, 0.15); color: #f472b6; border: 1px solid rgba(244, 114, 182, 0.3); }
+  .tag-omlx { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
+  .tag-gguf { background: rgba(215, 75, 75, 0.18); color: #ff9e9e; border: 1px solid rgba(215, 75, 75, 0.35); }
+  .tag-status { font-size: 11.5px; font-weight: 600; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+  .toast {
+    margin-top: 14px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    animation: fadeIn 0.2s ease-out;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .toast-info { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); }
+  .toast-success { background: var(--badge-ok-bg); border: 1px solid var(--badge-ok-border); color: var(--badge-ok-fg); }
+  .toast-error { background: #3d1a1e; border: 1px solid var(--accent); color: #fca5a5; }
+  .footer {
+    margin-top: 20px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .spinner {
+    width: 13px;
+    height: 13px;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="card-header">
+    <h2><span>🌐 LLM 智慧守護代理</span></h2>
+    <div id="header-badge" class="badge"></div>
+  </div>
+
+  <div class="info-list">
+    <div class="info-item">
+      <span class="info-label">當前模型</span>
+      <span class="info-val"><code id="cur-model" class="code-text">載入中...</code></span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">伺服器狀態</span>
+      <span class="info-val" id="cur-status">載入中...</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">公共端點</span>
+      <span class="info-val">
+        <code id="endpoint-text" class="code-text">http://127.0.0.1:__PUBLIC_PORT__/v1</code>
+        <button class="btn-copy" onclick="copyEndpoint(this)">📋 複製</button>
+      </span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">休眠策略</span>
+      <span class="info-val" id="cur-strategy">載入中...</span>
+    </div>
+  </div>
+
+  <div class="toolbar" style="flex-wrap: wrap;">
+    <button id="btn-wake" class="btn btn-wake" onclick="handleWake()">⚡ 立即啟動</button>
+    <button id="btn-sleep" class="btn btn-sleep" onclick="handleSleep()">💤 立即休眠</button>
+    <button id="btn-toggle-auto" class="btn btn-toggle" onclick="handleToggleAutoSleep()" title="切換是否啟用定時自動休眠">⏱️ 自動休眠: 開啟</button>
+    <button id="btn-stop" class="btn btn-stop" onclick="handleStop()" title="結束守護程式">🛑 退出守護</button>
+    <button id="btn-refresh" class="btn btn-refresh" onclick="fetchStatus(true)" title="重新整理狀態">🔄</button>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="models-box">
+    <div class="models-title">
+      <span>📦 可用模型一鍵切換（點選即載入）：</span>
+      <span id="models-count" style="font-size:11.5px;font-weight:normal;color:var(--text-secondary);"></span>
+    </div>
+    <div id="model-list" class="model-list"></div>
+  </div>
+
+  <div class="footer">
+    <span>💡 系統列紅綠燈 (⚪/🟢) 同步聯動即時狀態</span>
+    <span id="last-updated" style="font-size:11px;opacity:0.7;"></span>
+  </div>
+</div>
+
+<script>
+let currentData = __INITIAL_STATE_JSON__;
+let isBusy = false;
+
+function showToast(msg, type = 'info', duration = 3000) {
+  const t = document.getElementById('toast');
+  t.className = 'toast toast-' + type;
+  t.innerHTML = msg;
+  t.style.display = 'flex';
+  if (duration > 0) {
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.style.display = 'none'; }, duration);
+  }
+}
+
+function copyEndpoint(btn) {
+  const text = document.getElementById('endpoint-text').innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.innerText;
+    btn.innerText = '✓ 已複製';
+    btn.style.background = 'var(--accent)';
+    btn.style.color = '#fff';
+    setTimeout(() => {
+      btn.innerText = orig;
+      btn.style.background = '';
+      btn.style.color = '';
+    }, 1500);
+  }).catch(() => {
+    showToast('複製失敗，請手動複製', 'error');
+  });
+}
+
+function updateUI(data) {
+  currentData = data;
+  const status = data.status || 'sleeping';
+  const curModel = data.current_model || '無';
+  const curModelId = data.current_model_id || '';
+  const timeout = data.idle_timeout || 0;
+  const rem = data.idle_remaining || 0;
+  const autoSleep = data.auto_sleep_enabled !== false;
+
+  // Header Badge
+  const headerBadge = document.getElementById('header-badge');
+  if (status === 'running') {
+    headerBadge.innerHTML = '<span class="dot dot-green"></span> <span style="color:var(--green);">執行中</span>';
+  } else if (status === 'starting') {
+    headerBadge.innerHTML = '<span class="dot dot-amber"></span> <span style="color:var(--accent);">啟動載入中...</span>';
+  } else {
+    headerBadge.innerHTML = '<span class="dot dot-grey"></span> <span style="color:var(--text-secondary);">待命中</span>';
+  }
+
+  // Current Model
+  document.getElementById('cur-model').innerText = curModel;
+
+  // Strategy
+  const curStrategyEl = document.getElementById('cur-strategy');
+  if (autoSleep) {
+    curStrategyEl.innerHTML = timeout > 0 ? (timeout / 60) + ' 分鐘無動作休眠' : '3 分鐘無動作休眠';
+  } else {
+    curStrategyEl.innerHTML = '<span style="color:#fbbf24;font-weight:bold;">已關閉自動休眠 (常駐不釋放)</span>';
+  }
+
+  // Auto Sleep Toggle Button
+  const btnToggleAuto = document.getElementById('btn-toggle-auto');
+  if (btnToggleAuto) {
+    if (autoSleep) {
+      btnToggleAuto.className = 'btn btn-toggle active';
+      btnToggleAuto.innerHTML = '⏱️ 自動休眠: 開啟 (' + (timeout > 0 ? (timeout / 60) + 'm' : '3m') + ')';
+    } else {
+      btnToggleAuto.className = 'btn btn-toggle inactive';
+      btnToggleAuto.innerHTML = '♾️ 自動休眠: 關閉 (常駐)';
+    }
+  }
+
+  // Server Status
+  const curStatusEl = document.getElementById('cur-status');
+  if (status === 'running') {
+    if (autoSleep && timeout > 0) {
+      curStatusEl.innerHTML = '<span style="color:var(--green);font-weight:bold;">🟢 執行中</span> | 閒置倒數: <b id="rem-time" style="color:var(--text-primary);">' + rem + ' 秒</b>';
+    } else {
+      curStatusEl.innerHTML = '<span style="color:var(--green);font-weight:bold;">🟢 執行中</span> | <b style="color:#fbbf24;">♾️ 常駐不休眠</b>';
+    }
+  } else if (status === 'starting') {
+    curStatusEl.innerHTML = '<span style="color:var(--accent);font-weight:bold;"><span class="spinner" style="margin-right:4px;"></span> 模型啟動載入中...</span>';
+  } else {
+    curStatusEl.innerHTML = '<span style="color:var(--text-secondary);font-weight:bold;">⚪ 休眠待命中 (0% 顯存佔用)</span>';
+  }
+
+  // Buttons State
+  const btnWake = document.getElementById('btn-wake');
+  const btnSleep = document.getElementById('btn-sleep');
+  const btnStop = document.getElementById('btn-stop');
+
+  if (!isBusy) {
+    btnWake.disabled = (status === 'running' || status === 'starting');
+    btnSleep.disabled = (status === 'sleeping' || status === 'starting');
+    btnStop.disabled = false;
+    if (btnToggleAuto) btnToggleAuto.disabled = false;
+    btnWake.innerHTML = '⚡ 立即啟動';
+    btnSleep.innerHTML = '💤 立即休眠';
+  }
+
+  // Model List
+  renderModelList(data.models || [], curModelId, curModel, status);
+
+  // Last Updated
+  const d = new Date();
+  document.getElementById('last-updated').innerText = '更新時間: ' + d.toTimeString().split(' ')[0];
+}
+
+function renderModelList(models, curId, curName, status) {
+  const container = document.getElementById('model-list');
+  document.getElementById('models-count').innerText = models.length + ' 個模型可用';
+  let html = '';
+
+  for (const m of models) {
+    const isCur = (m.id === curId || m.name === curName);
+    const typeTagClass = m.type === 'mlx' ? 'tag-mlx' : (m.type === 'omlx' ? 'tag-omlx' : 'tag-gguf');
+    const mTimeout = m.idle_timeout !== undefined ? m.idle_timeout : 180;
+    const idleTag = mTimeout > 0 ? `<span style="color:var(--text-secondary);font-size:11px;margin-left:6px;">[${Math.round(mTimeout / 60)}m 休眠]</span>` : '<span style="color:var(--text-primary);font-size:11px;margin-left:6px;">[常駐]</span>';
+
+    let rightStatus = '';
+    if (isCur) {
+      if (status === 'running') {
+        rightStatus = '<span class="tag-status" style="color:var(--green);white-space:nowrap;">🟢 執行中</span>';
+      } else if (status === 'starting') {
+        rightStatus = '<span class="tag-status" style="color:var(--accent);white-space:nowrap;"><span class="spinner"></span> 載入中</span>';
+      } else {
+        rightStatus = '<span class="tag-status" style="color:var(--text-secondary);white-space:nowrap;">⚪ 已選定</span>';
+      }
+    } else {
+      rightStatus = '<span class="tag-status" style="color:var(--accent);white-space:nowrap;">點選載入 ➔</span>';
+    }
+
+    const activeClass = isCur ? 'active' : '';
+    const disabledAttr = (isBusy || (isCur && status === 'running')) ? 'disabled' : '';
+
+    html += `
+      <button class="model-card ${activeClass}" ${disabledAttr} onclick="handleSwitch('${encodeURIComponent(m.id)}', '${m.name}', this)">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          <span class="tag ${typeTagClass}" style="flex-shrink:0;">[${m.type.toUpperCase()}]</span>
+          <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${m.name}">${m.name}</span>
+          <span style="flex-shrink:0;white-space:nowrap;">${idleTag}</span>
+        </div>
+        <div style="flex-shrink:0;margin-left:12px;white-space:nowrap;">${rightStatus}</div>
+      </button>
+    `;
+  }
+  container.innerHTML = html;
+}
+
+async function fetchStatus(showManualFeedback = false) {
+  try {
+    const res = await fetch('/api/status');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    updateUI(data);
+    if (showManualFeedback) {
+      showToast('✓ 狀態已更新', 'success', 1500);
+    }
+  } catch (err) {
+    console.error('Fetch status error:', err);
+    if (showManualFeedback) {
+      showToast('⚠️ 連線後端失敗: ' + err.message, 'error', 3000);
+    }
+  }
+}
+
+async function handleToggleAutoSleep() {
+  if (isBusy) return;
+  isBusy = true;
+  const btn = document.getElementById('btn-toggle-auto');
+  if (btn) {
+    btn.innerHTML = '<span class="spinner"></span> 切換中...';
+    btn.disabled = true;
+  }
+
+  try {
+    const res = await fetch('/api/toggle_auto_sleep', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      const isEnabled = data.auto_sleep_enabled;
+      showToast(isEnabled ? '⏱️ 已開啟自動休眠（閒置 3 分鐘釋放顯存）' : '♾️ 已關閉自動休眠（模型將常駐執行）', 'success', 3000);
+    } else {
+      showToast('❌ 切換失敗', 'error', 3000);
+    }
+  } catch (err) {
+    showToast('❌ 請求失敗: ' + err.message, 'error', 4000);
+  } finally {
+    isBusy = false;
+    await fetchStatus();
+  }
+}
+
+async function handleWake() {
+  if (isBusy) return;
+  isBusy = true;
+  const btn = document.getElementById('btn-wake');
+  btn.innerHTML = '<span class="spinner"></span> 啟動中...';
+  btn.disabled = true;
+  document.getElementById('btn-sleep').disabled = true;
+  showToast('⚡ 正在啟動 LLM 引擎並載入模型權重，請稍候...', 'info', 0);
+
+  try {
+    const res = await fetch('/api/wake', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast('🟢 LLM 啟動成功！隨時可供推論', 'success', 3000);
+    } else {
+      showToast('❌ 啟動失敗，請檢查模型權重或終端機記錄', 'error', 5000);
+    }
+  } catch (err) {
+    showToast('❌ 請求失敗: ' + err.message, 'error', 4000);
+  } finally {
+    isBusy = false;
+    await fetchStatus();
+  }
+}
+
+async function handleSleep() {
+  if (isBusy) return;
+  isBusy = true;
+  const btn = document.getElementById('btn-sleep');
+  btn.innerHTML = '<span class="spinner"></span> 休眠中...';
+  btn.disabled = true;
+  document.getElementById('btn-wake').disabled = true;
+  showToast('💤 正在關閉推論進程並 100% 釋放 GPU 顯存...', 'info', 0);
+
+  try {
+    const res = await fetch('/api/sleep', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast('💤 模型已休眠，顯存已 100% 完全釋放', 'success', 3000);
+    } else {
+      showToast('⚠️ 休眠響應異常', 'error', 3000);
+    }
+  } catch (err) {
+    showToast('❌ 請求失敗: ' + err.message, 'error', 4000);
+  } finally {
+    isBusy = false;
+    await fetchStatus();
+  }
+}
+
+async function handleSwitch(encodedId, name, btn) {
+  if (isBusy) return;
+  isBusy = true;
+  if (btn) {
+    btn.innerHTML = `<div style="display:flex;align-items:center;gap:8px;"><span class="spinner"></span> <span>載入 ${name} 中...</span></div><div><span class="tag-status" style="color:var(--accent);">載入中</span></div>`;
+  }
+  document.getElementById('btn-wake').disabled = true;
+  document.getElementById('btn-sleep').disabled = true;
+  showToast(`🔄 正在卸載舊模型並載入 ${name}，請稍候...`, 'info', 0);
+
+  try {
+    const res = await fetch('/api/switch?model=' + encodedId, { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      showToast(`🟢 已成功切換並就緒: ${name}`, 'success', 3500);
+    } else {
+      showToast(`❌ 切換失敗: ${data.message || '未知錯誤'}`, 'error', 5000);
+    }
+  } catch (err) {
+    showToast('❌ 請求失敗: ' + err.message, 'error', 4000);
+  } finally {
+    isBusy = false;
+    await fetchStatus();
+  }
+}
+
+async function handleStop() {
+  if (!confirm('🛑 確定要徹底退出守護程式並關閉本地 LLM 嗎？\n退出後選單列紅綠燈與 API 服務將同時停止。')) {
+    return;
+  }
+  isBusy = true;
+  const btn = document.getElementById('btn-stop');
+  btn.innerHTML = '<span class="spinner"></span> 退出中...';
+  btn.disabled = true;
+  showToast('🛑 正在安全終止進程與釋放資源...', 'info', 0);
+
+  try {
+    await fetch('/api/stop', { method: 'POST' });
+  } catch (e) {}
+
+  document.body.innerHTML = `
+    <div style="background:var(--bg-surface);border:1px solid var(--border);border-top:3.5px solid var(--accent);border-radius:14px;padding:36px;text-align:center;max-width:480px;margin:60px auto;box-shadow:0 20px 45px rgba(0,0,0,0.5);">
+      <h2 style="color:var(--accent);font-size:22px;margin-bottom:12px;">🛑 守護程式與本地 LLM 已完全關閉</h2>
+      <p style="color:var(--text-secondary);font-size:14px;line-height:1.6;margin-bottom:18px;">顯存與系統記憶體已 100% 釋放，您可以安心關閉此分頁。</p>
+      <p style="color:var(--text-dim);font-size:12px;">若需重新啟用，請在 Windows 執行 <code>windows\\start-watchdog.ps1</code> 或 <code>啟動LLM守護代理.bat</code></p>
+    </div>
+  `;
+}
+
+// 倒數計時平滑遞減 (每秒)
+setInterval(() => {
+  if (currentData && currentData.status === 'running' && currentData.idle_timeout > 0 && currentData.idle_remaining > 0) {
+    currentData.idle_remaining = Math.max(0, currentData.idle_remaining - 1);
+    const el = document.getElementById('rem-time');
+    if (el) el.innerText = currentData.idle_remaining + ' 秒';
+  }
+}, 1000);
+
+// 背景自動輪詢 (每 2 秒)
+setInterval(() => {
+  if (!isBusy) {
+    fetchStatus(false);
+  }
+}, 2000);
+
+// 初始化渲染
+updateUI(currentData);
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-﻿$Host.UI.RawUI.WindowTitle = "LLM 智慧守護代理 (停止中)"
+$Host.UI.RawUI.WindowTitle = "LLM 智慧守護代理 (停止中)"
 Write-Host "正在關閉 LLM 守護代理並釋放顯存..." -ForegroundColor Yellow
 
 try {
@@ -7,7 +7,8 @@ try {
 
 # 清理所有殘留進程
 $procs = Get-CimInstance Win32_Process | Where-Object { 
-    $_.CommandLine -like "*llm_watchdog_win.py*" -or 
+    $_.CommandLine -like "*watchdog*" -or 
+    $_.CommandLine -like "*llm_watchdog*" -or 
     $_.CommandLine -like "*llm_tray.py*" -or 
     $_.Name -eq "llama-server.exe" 
 }

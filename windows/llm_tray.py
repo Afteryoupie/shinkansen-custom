@@ -99,6 +99,7 @@ class LLMTray:
         self._status = "offline"  # offline / sleeping / starting / running
         self._model_name = ""
         self._models = []
+        self._auto_sleep_enabled = True
         self._lock = threading.Lock()
 
         # 建立 pystray 圖示
@@ -114,6 +115,7 @@ class LLMTray:
     def _build_menu(self):
         with self._lock:
             models = list(self._models)
+            auto_sleep = self._auto_sleep_enabled
 
         # 模型次選單項目（純文字，點選即切換並啟動）
         if models:
@@ -129,6 +131,8 @@ class LLMTray:
                 pystray.MenuItem("(尚未偵測到模型)", None, enabled=False)
             ]
 
+        auto_sleep_label = "✓ 自動休眠：開啟 (3m)" if auto_sleep else "　自動休眠：關閉 (常駐)"
+
         return pystray.Menu(
             pystray.MenuItem("開啟控制儀表板", self._open_dashboard),
             pystray.Menu.SEPARATOR,
@@ -137,6 +141,7 @@ class LLMTray:
                 pystray.Menu(*model_items)
             ),
             pystray.MenuItem("立即休眠釋放顯存", self._sleep_model),
+            pystray.MenuItem(auto_sleep_label, self._toggle_auto_sleep),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("重新整理狀態", self._refresh_now),
             pystray.Menu.SEPARATOR,
@@ -174,10 +179,12 @@ class LLMTray:
                 self._status = "offline"
                 self._model_name = ""
                 self._models = []
+                self._auto_sleep_enabled = True
             else:
                 self._status = data.get("status", "sleeping")
                 self._model_name = data.get("current_model", "")
                 self._models = data.get("models", [])
+                self._auto_sleep_enabled = data.get("auto_sleep_enabled", True)
         self._update_icon()
         # 每次狀態更新也重建選單（模型清單可能改變）
         try:
@@ -221,6 +228,11 @@ class LLMTray:
     def _sleep_model(self, icon=None, item=None):
         api_post("/api/sleep")
         time.sleep(0.5)
+        self._refresh_state()
+
+    def _toggle_auto_sleep(self, icon=None, item=None):
+        api_post("/api/toggle_auto_sleep")
+        time.sleep(0.3)
         self._refresh_state()
 
     def _refresh_now(self, icon=None, item=None):

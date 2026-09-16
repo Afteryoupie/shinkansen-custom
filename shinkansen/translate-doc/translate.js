@@ -602,7 +602,8 @@ export function stripTrailingSeparatorGarbage(s) {
     // 「<<SHINKANSEN_SEP>>」兩角括號變體,3 角括號的 split 吃不掉,整批 cell
     // 殘留字面 token(2L ink 實測)。與 content-ns.js SK.sanitizeMarkers 是
     // 同一份事實的雙實作,改這裡必同步那邊
-    .replace(/\s*[<«]{1,6}\s*SHINKANSEN_SEP\s*[>»]{1,6}\s*/gi, ' ')
+    // v2.0.76: 放寬拼寫容錯（例如模型幻覺拼成 <<<SHINKANAN_SEP>>>、<<<SHINKASEN_SEP>>> 等）
+    .replace(/\s*[<«]{1,6}\s*SHIN[A-Za-z0-9_-]*_?SEP\s*[>»]{1,6}\s*/gi, ' ')
     .replace(/\s*<{3,}(?:(?!>{3})[^\s㐀-鿿぀-ヿ]){0,24}$/, '')
     .trim();
 }

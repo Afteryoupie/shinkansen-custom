@@ -261,6 +261,8 @@
     'options.domain.whitelistLabel': '自動翻譯網站（每行一個網域，進入時自動翻譯）',
     'options.domain.autoTranslateSlotLabel': '自動翻譯使用的預設',
     'options.domain.autoTranslateSlotHint': '進入白名單網域時走哪一組預設（等同自動按下對應的快速鍵）',
+    'options.domain.crossTabStickyLabel': '跨分頁延續翻譯（從已翻譯頁面點連結開啟新分頁時自動翻譯）',
+    'options.domain.crossTabStickyHint': '預設關閉。關閉後僅手動翻譯當前分頁，新開啟的分頁不會自動跟著翻譯，避免連續開分頁時吃光本機 LLM 資源',
 
     // ── options 語言偵測 ─────────────────────────────────
 
@@ -1302,6 +1304,8 @@
     'options.domain.whitelistLabel': '自动翻译网站（每行一个域名，进入时自动翻译）',
     'options.domain.autoTranslateSlotLabel': '自动翻译使用的预设',
     'options.domain.autoTranslateSlotHint': '进入白名单域名时走哪一组预设（等同自动按下对应的快捷键）',
+    'options.domain.crossTabStickyLabel': '跨标签页延续翻译（从已翻译页面点击链接打开新标签页时自动翻译）',
+    'options.domain.crossTabStickyHint': '默认关闭。关闭后仅手动翻译当前标签页，新打开的标签页不会自动跟随翻译，避免连续打开标签页时耗尽本地 LLM 资源',
 
     // ── options 语言检测 ─────────────────────────────────
 
@@ -2338,6 +2342,8 @@
     'options.domain.whitelistLabel': 'Auto-translate sites (one domain per line, translates on entry)',
     'options.domain.autoTranslateSlotLabel': 'Preset for auto-translate',
     'options.domain.autoTranslateSlotHint': 'Which preset to use when entering whitelisted domains (equivalent to pressing the corresponding shortcut)',
+    'options.domain.crossTabStickyLabel': 'Cross-tab sticky translation (auto-translate new tabs opened from translated pages)',
+    'options.domain.crossTabStickyHint': 'Disabled by default. When disabled, only the current tab is translated; new tabs will not translate automatically, saving local LLM resources',
 
     // ── options language detection ───────────────────────
 
