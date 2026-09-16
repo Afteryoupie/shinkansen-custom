@@ -139,5 +139,5 @@ If you enjoyed this, don't forget to like and subscribe!
 ---
 
 ## 📦 套件整合
-- 已將優化後的 Prompt 同步寫入 [`shinkansen-custom/shinkansen/lib/storage.js`](file:///Users/linjiade/LLM/Edge-Plugin/shinkansen-custom/shinkansen/lib/storage.js) 中的 `DEFAULT_SUBTITLE_SYSTEM_PROMPT`。
-- 已重新封裝產生最新的 [`shinkansen-custom.zip`](file:///Users/linjiade/LLM/Edge-Plugin/shinkansen-custom.zip)。
+- 已將優化後的 Prompt 同步寫入 [`shinkansen-custom/shinkansen/lib/storage.js`](file:///Users/linjiade/LLM/translation_tools/shinkansen-custom/shinkansen/lib/storage.js) 中的 `DEFAULT_SUBTITLE_SYSTEM_PROMPT`。
+- 已重新封裝產生最新的 [`shinkansen-custom.zip`](file:///Users/linjiade/LLM/translation_tools/shinkansen-custom.zip)。
