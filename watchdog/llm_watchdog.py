@@ -102,7 +102,7 @@ async def main():
         signal.signal(signal.SIGINT, _win_sig_handler)
         signal.signal(signal.SIGTERM, _win_sig_handler)
 
-    asyncio.create_task(idle_checker())
+    state.idle_task = asyncio.create_task(idle_checker())
 
     async with server_8080:
         while not stop_event.is_set():

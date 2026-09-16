@@ -21,6 +21,7 @@ class State:
         self.stop_event: Optional[asyncio.Event] = None
         self.should_exit: bool = False
         self.auto_sleep_enabled: bool = True
+        self.idle_task: Optional[asyncio.Task] = None
 
 # 全域單例
 state = State()

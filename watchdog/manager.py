@@ -320,13 +320,18 @@ async def switch_model(target_id: str) -> Tuple[bool, str]:
 async def idle_checker():
     """定時檢查閒置狀態：全模型預設 3 分鐘自動休眠（若關閉自動休眠則保持常駐）"""
     while not state.should_exit:
-        await asyncio.sleep(2)
-        if not state.auto_sleep_enabled:
-            continue
-        if state.llm_proc and state.llm_proc.poll() is None and state.active_requests == 0:
-            m = state.current_model
-            timeout = m.get("idle_timeout", 0) if m else 0
-            if timeout > 0:
-                elapsed = time.time() - state.last_active_time
-                if elapsed >= timeout:
-                    stop_llm()
+        try:
+            await asyncio.sleep(2)
+            if not state.auto_sleep_enabled:
+                continue
+            if state.llm_proc and state.llm_proc.poll() is None and state.active_requests == 0:
+                m = state.current_model
+                timeout = m.get("idle_timeout", 0) if m else 0
+                if timeout > 0:
+                    elapsed = time.time() - state.last_active_time
+                    if elapsed >= timeout:
+                        stop_llm()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[警告] 閒置檢查異常: {e}", flush=True)

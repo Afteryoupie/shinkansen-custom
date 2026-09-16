@@ -1373,6 +1373,18 @@ $('uiLanguage')?.addEventListener('change', async () => {
   }
 });
 
+// UI Theme picker change handler — 立刻套用主題並儲存
+$('uiTheme')?.addEventListener('change', async () => {
+  const v = $('uiTheme').value;
+  const th = ['auto', 'light', 'dark'].includes(v) ? v : 'auto';
+  applyTheme(th);
+  try {
+    await browser.storage.sync.set({ uiTheme: th });
+  } catch (err) {
+    try { await browser.storage.local.set({ uiTheme: th }); } catch (_e) {}
+  }
+});
+
 // 判斷 terms 是否「視為未客製」(純函式，jest 抽測用；2026-07-09 target-aware 化):
 //   任何 target：逐條等於 defaults(DEFAULT_FORBIDDEN_TERMS)→ 未客製
 //     (含「autosave 物化殘留 26 條後才把 target 切走」的情形，可回收)

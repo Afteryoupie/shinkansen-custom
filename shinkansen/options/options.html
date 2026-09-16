@@ -50,9 +50,9 @@
     <!-- P2 (v1.8.60):介面語言(UI dict),獨立於翻譯目標。預設 'auto' 跟 chrome 瀏覽器語系。
          option label 維持 native script 不 i18n。 -->
     <section>
-      <h2 data-i18n="options.uiLanguage.heading">介面語言</h2>
+      <h2 data-i18n="options.uiLanguage.heading">介面語言與外觀主題</h2>
       <label>
-        <span data-i18n="options.uiLanguage.label">擴充功能介面顯示</span>
+        <span data-i18n="options.uiLanguage.label">擴充功能介面顯示語言</span>
         <select id="uiLanguage">
           <option value="auto" data-i18n="options.uiLanguage.auto">自動（跟瀏覽器設定）</option>
           <option value="zh-TW">繁體中文（台灣）</option>
@@ -65,6 +65,15 @@
           <option value="de">Deutsch</option>
         </select>
         <small class="muted" data-i18n="options.uiLanguage.hint">控制工具列圖示、設定頁、翻譯進度通知等擴充功能介面字串的語言。跟工具列圖示選單中的「翻譯目標語言」獨立，互不影響</small>
+      </label>
+      <label style="margin-top: 14px;">
+        <span>擴充功能色彩主題</span>
+        <select id="uiTheme">
+          <option value="auto">🌓 跟隨系統外觀 (Auto)</option>
+          <option value="light">☀️ 石板珊瑚 · 白色版 (Light)</option>
+          <option value="dark">🌙 石板珊瑚 · 深色版 (Dark)</option>
+        </select>
+        <small class="muted">切換工具列彈出面板、詳細設定頁及文件翻譯的深淺色外觀主題（選擇後即時套用）。</small>
       </label>
     </section>
 

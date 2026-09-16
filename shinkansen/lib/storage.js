@@ -606,6 +606,8 @@ export const DEFAULT_SETTINGS = {
   // P2 (v1.8.60):UI 語系偏好。'auto' = 跟 chrome 瀏覽器語系(navigator.language);
   // 使用者可選 zh-TW / zh-CN / en 強制鎖。預設 'auto' 不寫 storage(getSettings 走 default)。
   uiLanguage: 'auto',
+  // 主題外觀偏好：'auto' | 'light' | 'dark'
+  uiTheme: 'auto',
   geminiConfig: {
     model: 'gemini-3.1-flash-lite',        // 預設模型 = Gemini 3.1 Flash Lite（省成本，與主要預設 slot 2 一致）
     serviceTier: 'DEFAULT',

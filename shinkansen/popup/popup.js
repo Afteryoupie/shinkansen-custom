@@ -789,12 +789,44 @@ if ($('restore-btn')) {
   });
 }
 
+function updateThemeButton(pref, effective) {
+  const btn = $('theme-toggle-btn');
+  if (!btn) return;
+  if (pref === 'light') {
+    btn.textContent = '☀️';
+    btn.title = '主題：石板珊瑚 · 白色版 (點擊切換為深色版)';
+  } else if (pref === 'dark') {
+    btn.textContent = '🌙';
+    btn.title = '主題：石板珊瑚 · 深色版 (點擊切換為跟隨系統)';
+  } else {
+    btn.textContent = '🌓';
+    btn.title = `主題：跟隨系統 [${effective === 'dark' ? '深色' : '淺色'}] (點擊切換為白色版)`;
+  }
+}
+
+// 初始化主題變更回呼
+initTheme((pref, effective) => {
+  updateThemeButton(pref, effective);
+});
+
+// 初始設定按鈕外觀
+(() => {
+  const pref = document.documentElement.getAttribute('data-theme-pref') || 'auto';
+  const eff = document.documentElement.getAttribute('data-theme') || 'light';
+  updateThemeButton(pref, eff);
+})();
+
 const themeBtn = $('theme-toggle-btn');
 if (themeBtn) {
   themeBtn.addEventListener('click', async () => {
     const cur = document.documentElement.getAttribute('data-theme-pref') || 'auto';
     const next = cur === 'light' ? 'dark' : (cur === 'dark' ? 'auto' : 'light');
-    await browser.storage.sync.set({ uiTheme: next });
-    applyTheme(next);
+    try {
+      await browser.storage.sync.set({ uiTheme: next });
+    } catch (_e) {
+      try { await browser.storage.local.set({ uiTheme: next }); } catch (_err) {}
+    }
+    const eff = applyTheme(next);
+    updateThemeButton(next, eff);
   });
 }

@@ -74,7 +74,12 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
             m = state.current_model
             timeout = m.get("idle_timeout", 0) if m else 0
             if llm_alive and timeout > 0:
-                rem = max(0, int(timeout - (time.time() - state.last_active_time)))
+                elapsed = time.time() - state.last_active_time
+                rem = max(0, int(timeout - elapsed))
+                if elapsed >= timeout and state.auto_sleep_enabled and state.active_requests == 0:
+                    stop_llm()
+                    status_str = "sleeping"
+                    rem = 0
             else:
                 rem = 0
 
@@ -86,6 +91,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 "idle_timeout": timeout,
                 "idle_remaining": rem,
                 "auto_sleep_enabled": state.auto_sleep_enabled,
+                "active_requests": state.active_requests,
                 "models": state.models,
             }
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -244,7 +250,12 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
             m = state.current_model
             timeout = m.get("idle_timeout", 0) if m else 0
             if llm_alive and timeout > 0:
-                rem = max(0, int(timeout - (time.time() - state.last_active_time)))
+                elapsed = time.time() - state.last_active_time
+                rem = max(0, int(timeout - elapsed))
+                if elapsed >= timeout and state.auto_sleep_enabled and state.active_requests == 0:
+                    stop_llm()
+                    status_str = "sleeping"
+                    rem = 0
             else:
                 rem = 0
 
@@ -289,51 +300,61 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
         try:
             ok = await start_llm()
             if not ok:
-                err = b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\n\r\n{\"error\":\"LLM failed to start\"}"
+                err = b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"LLM failed to start\"}"
                 client_writer.write(err)
                 await client_writer.drain()
                 return
 
             # 智慧正規化請求 Body 中的 model 名稱（適用於 rapid-mlx / omlx / llama-server）
-            if state.current_model:
-                header_bytes, sep, body_bytes = initial_data.partition(b"\r\n\r\n")
-                if sep and b"application/json" in header_bytes and b'"model"' in body_bytes:
+            header_bytes, sep, body_bytes = initial_data.partition(b"\r\n\r\n")
+            if sep:
+                cl_val = None
+                for line in header_bytes.split(b"\r\n"):
+                    if line.lower().startswith(b"content-length:"):
+                        try:
+                            cl_val = int(line.split(b":", 1)[1].strip())
+                        except Exception:
+                            pass
+                        break
+                if cl_val is not None and len(body_bytes) < cl_val:
+                    while len(body_bytes) < cl_val:
+                        chunk = await client_reader.read(min(4096, cl_val - len(body_bytes)))
+                        if not chunk:
+                            break
+                        body_bytes += chunk
+
+                if b"application/json" in header_bytes and b'"model"' in body_bytes and state.current_model:
                     try:
-                        cl_val = None
-                        for line in header_bytes.split(b"\r\n"):
-                            if line.lower().startswith(b"content-length:"):
-                                cl_val = int(line.split(b":", 1)[1].strip())
-                                break
-                        if cl_val is not None:
-                            while len(body_bytes) < cl_val:
-                                chunk = await client_reader.read(min(4096, cl_val - len(body_bytes)))
-                                if not chunk:
-                                    break
-                                body_bytes += chunk
-                            
-                            data_obj = json.loads(body_bytes.decode("utf-8"))
-                            if state.current_model["type"] == "mlx":
-                                data_obj["model"] = state.current_model["path"]
-                            elif state.current_model["type"] == "omlx":
-                                data_obj["model"] = state.current_model["id"]
-                            elif state.current_model["type"] == "gguf":
-                                data_obj["model"] = state.current_model["path"]
-                            new_body = json.dumps(data_obj).encode("utf-8")
-                            
-                            new_headers = []
-                            for line in header_bytes.split(b"\r\n"):
-                                if line.lower().startswith(b"content-length:"):
-                                    new_headers.append(f"Content-Length: {len(new_body)}".encode("utf-8"))
-                                else:
-                                    new_headers.append(line)
-                            initial_data = b"\r\n".join(new_headers) + b"\r\n\r\n" + new_body
+                        data_obj = json.loads(body_bytes.decode("utf-8"))
+                        if state.current_model["type"] == "mlx":
+                            data_obj["model"] = state.current_model["path"]
+                        elif state.current_model["type"] == "omlx":
+                            data_obj["model"] = state.current_model["id"]
+                        elif state.current_model["type"] == "gguf":
+                            data_obj["model"] = state.current_model["path"]
+                        body_bytes = json.dumps(data_obj).encode("utf-8")
                     except Exception:
                         pass
+
+                new_headers = []
+                has_conn = False
+                for line in header_bytes.split(b"\r\n"):
+                    if line.lower().startswith(b"content-length:"):
+                        new_headers.append(f"Content-Length: {len(body_bytes)}".encode("utf-8"))
+                    elif line.lower().startswith(b"connection:"):
+                        new_headers.append(b"Connection: close")
+                        has_conn = True
+                    else:
+                        new_headers.append(line)
+                if not has_conn:
+                    new_headers.append(b"Connection: close")
+
+                initial_data = b"\r\n".join(new_headers) + b"\r\n\r\n" + body_bytes
 
             try:
                 llm_reader, llm_writer = await asyncio.open_connection("127.0.0.1", LLM_INTERNAL_PORT)
             except Exception as e:
-                err = f"HTTP/1.1 502 Bad Gateway\r\n\r\nCannot connect to LLM: {e}".encode("utf-8")
+                err = f"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\nCannot connect to LLM: {e}".encode("utf-8")
                 client_writer.write(err)
                 await client_writer.drain()
                 return
@@ -341,7 +362,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
             llm_writer.write(initial_data)
             await llm_writer.drain()
 
-            # 雙向串流管線（支援 SSE stream 即時字幕與串流補全）
+            # 雙向串流轉發（支援 SSE stream 即時字幕與串流補全）
             async def fwd_client_to_llm():
                 try:
                     while True:
@@ -350,7 +371,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                             break
                         llm_writer.write(data)
                         await llm_writer.drain()
-                except Exception:
+                except (asyncio.CancelledError, Exception):
                     pass
                 finally:
                     try:
@@ -366,12 +387,23 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                             break
                         client_writer.write(data)
                         await client_writer.drain()
-                except Exception:
+                except (asyncio.CancelledError, Exception):
                     pass
 
-            await asyncio.gather(fwd_client_to_llm(), fwd_llm_to_client())
-            llm_writer.close()
+            t_client = asyncio.create_task(fwd_client_to_llm())
+            t_llm = asyncio.create_task(fwd_llm_to_client())
+
+            # LLM 傳送完回應 (t_llm 完成) 或客戶端斷開 (t_client 完成) 即結束
+            done, pending = await asyncio.wait([t_client, t_llm], return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+
             try:
+                llm_writer.close()
                 await llm_writer.wait_closed()
             except Exception:
                 pass

@@ -5,6 +5,7 @@ import { browser } from './lib/compat.js';
 import { IS_IOS_BUILD } from './lib/distribution.js'; // Phase 2: host app 設定橋接只在 iOS build 走 native messaging
 import { translateBatch, extractGlossary, extractTermRenderings, translateBatchStream, summarizeArticle } from './lib/gemini.js';
 import { translateBatch as translateBatchCustom, extractGlossary as extractGlossaryCustom } from './lib/openai-compat.js'; // v1.5.7
+import { ensureLocalLlamaServer } from './custom/local-llama.js';
 import { translateGoogleBatch } from './lib/google-translate.js';
 import { getSettingsCached, setSettings, cleanupLegacySyncKeys, DEFAULT_SUBTITLE_SYSTEM_PROMPT, DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT, DEFAULT_DOC_SYSTEM_PROMPT, DOC_INLINE_MARKER_INSTRUCTION, getEffectiveSystemPrompt, getEffectiveSubtitleSystemPrompt, getEffectiveAsrSubtitleSystemPrompt, getEffectiveDocSystemPrompt, getEffectiveGlossaryPrompt, LANG_LABELS, isPromptUnchangedFromAnyTargetDefault, DEFAULT_SETTINGS } from './lib/storage.js';
 import { debugLog, getLogs, clearLogs, getPersistedLogs, getAnomalyLogs, clearPersistedLogs } from './lib/logger.js';
@@ -1902,18 +1903,21 @@ async function testCustomProvider(payload) {
 
   const url = /\/chat\/completions$/.test(baseUrl) ? baseUrl : baseUrl + '/chat/completions';
   try {
+    await ensureLocalLlamaServer(url);
     const headers = { 'Content-Type': 'application/json' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
     const reqBody = {
-      messages: [{ role: 'user', content: 'ping' }],
+      messages: [{ role: 'user', content: 'Respond with only the single word: pong' }],
       stream: false,
     };
     if (model) reqBody.model = model;
+    const isLocal = baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost');
+    const timeoutMs = isLocal ? 35000 : 15000;
     const resp = await fetchWithTimeout(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(reqBody),
-    }, 10000);
+    }, timeoutMs);
     if (resp.ok) {
       const j = await resp.json().catch(() => ({}));
       const used = j?.usage?.total_tokens || j?.usage?.prompt_tokens || 0;
