@@ -31,10 +31,10 @@ MODELS_DIR = next((d for d in CANDIDATE_MODELS_DIRS if d.exists()), PROJECT_DIR 
 _venv_sub = "Scripts" if sys.platform == "win32" else "bin"
 _py_exe = "python.exe" if sys.platform == "win32" else "python3"
 _candidate_venv_dirs = [
-    Path(sys.executable).parent,
     PROJECT_DIR / ".venv" / _venv_sub,
-    PROJECT_DIR.parent.parent / ".venv" / _venv_sub,
     PROJECT_DIR.parent / ".venv" / _venv_sub,
+    PROJECT_DIR.parent.parent / ".venv" / _venv_sub,
+    Path(sys.executable).parent,
 ]
 VENV_BIN = next((d for d in _candidate_venv_dirs if (d / _py_exe).exists()), PROJECT_DIR / ".venv" / _venv_sub)
 

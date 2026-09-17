@@ -411,8 +411,12 @@ export function buildEffectiveSystemInstruction(baseSystem, texts, joined, gloss
   // 多段翻譯分隔符與序號規則(嵌入 batch 段數 N,batch 級變動;放最末端讓前段 cache 共享)
   if (texts.length > 1) {
     const m = marker.display;
+    const isNoPunct = /無標點|零標點|禁止任何標點/i.test(baseSystem);
+    const noPunctRule = isNoPunct
+      ? '\n- 嚴格遵守零標點純文字規則：每段譯文禁止任何中英文標點符號，逗號冒號一律改為半形空格，句末直接以文字結束'
+      : '';
     parts.push(
-      `額外規則（多段翻譯分隔符與序號，極重要）:\n本批次包含 ${texts.length} 段文字。每段開頭有序號標記 ${m}（N 為 1 到 ${texts.length}），段與段之間以分隔符 <<<SHINKANSEN_SEP>>> 隔開。\n你的輸出必須：\n- 每段譯文開頭也加上對應的序號標記 ${m}（N 與輸入的序號一一對應）\n- 段與段之間用完全相同的分隔符 <<<SHINKANSEN_SEP>>> 隔開\n- 恰好輸出 ${texts.length} 段譯文和 ${texts.length - 1} 個分隔符\n- 不可合併段落、不可省略分隔符、不可增減段數`
+      `額外規則（多段翻譯分隔符與序號，極重要）:\n本批次包含 ${texts.length} 段文字。每段開頭有序號標記 ${m}（N 為 1 到 ${texts.length}），段與段之間以分隔符 <<<SHINKANSEN_SEP>>> 隔開。\n你的輸出必須：\n- 每段譯文開頭也加上對應的序號標記 ${m}（N 與輸入的序號一一對應）\n- 段與段之間用完全相同的分隔符 <<<SHINKANSEN_SEP>>> 隔開\n- 恰好輸出 ${texts.length} 段譯文和 ${texts.length - 1} 個分隔符\n- 不可合併段落、不可省略分隔符、不可增減段數${noPunctRule}`
     );
   }
 

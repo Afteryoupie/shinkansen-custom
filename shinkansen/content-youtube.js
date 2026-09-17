@@ -850,6 +850,11 @@
     if (start < 0) throw new Error('ASR response: no array found');
     const parsed = JSON.parse(stripped.slice(start));
     if (!Array.isArray(parsed)) throw new Error('ASR response: not an array');
+    if (typeof SK.stripSubtitlePunctuation === 'function') {
+      for (const item of parsed) {
+        if (item && item.t) item.t = SK.stripSubtitlePunctuation(item.t);
+      }
+    }
     return parsed;
   }
 
@@ -892,9 +897,13 @@
       if (b < a) [a, b] = [b, a];
       const segA = segs[a - 1];
       const segB = segs[b - 1];
-      if (!segA || !segB) { entries.push({ s: NaN, e: NaN, t: m[3] }); continue; }
+      const rawTrans = m[3];
+      const cleanTrans = typeof SK.stripSubtitlePunctuation === 'function'
+        ? SK.stripSubtitlePunctuation(rawTrans)
+        : rawTrans;
+      if (!segA || !segB) { entries.push({ s: NaN, e: NaN, t: cleanTrans }); continue; }
       const next = segs[b];
-      entries.push({ s: segA.startMs, e: next ? next.startMs : batchEndMs, t: m[3] });
+      entries.push({ s: segA.startMs, e: next ? next.startMs : batchEndMs, t: cleanTrans });
     }
     if (matched === 0) throw new Error('ASR response: no parsable lines');
     return entries;
@@ -1556,7 +1565,8 @@
   const _injectedSegmentText = new WeakMap();
 
   function _setSegmentText(el, text) {
-    const str = text == null ? '' : String(text);
+    const clean = typeof SK.stripSubtitlePunctuation === 'function' ? SK.stripSubtitlePunctuation(text) : text;
+    const str = clean == null ? '' : String(clean);
     if (!str) {
       if (el.textContent !== '') el.textContent = '';
       _injectedSegmentText.set(el, '');
@@ -1597,7 +1607,8 @@
       srcEl = host.shadowRoot.querySelector('.src');
       if (!tgtEl) return; // 還是失敗就放棄(不該發生)
     }
-    if (!targetText) {
+    const cleanTarget = typeof SK.stripSubtitlePunctuation === 'function' ? SK.stripSubtitlePunctuation(targetText) : targetText;
+    if (!cleanTarget) {
       if (tgtEl.innerHTML !== '') tgtEl.innerHTML = '';
       if (srcEl) {
         if (srcEl.innerHTML !== '') srcEl.innerHTML = '';
@@ -1606,7 +1617,7 @@
       host.style.display = 'none';
       return;
     }
-    const wrapped = _wrapTargetText(targetText);
+    const wrapped = _wrapTargetText(cleanTarget);
     // 用 innerHTML + <br> 寫入(比 textContent + \n + white-space:pre-wrap 更穩定,
     // 不受 inline-block 的 wrap 行為差異影響)。先 escape HTML 字元防注入。
     const html = _escapeHtml(wrapped).replace(/\n/g, '<br>');
@@ -2544,8 +2555,8 @@
     const firstBatchSize = leadMs <= 0        ? 1
                          : wallLeadMs < 5000   ? 2
                          : wallLeadMs < 10000  ? 4
-                         : wallLeadMs < 15000  ? 12
-                         : 16;
+                         : wallLeadMs < 15000  ? 6
+                         : 8;
     return { videoNowMs, leadMs, playbackRate, wallLeadMs, firstBatchSize };
   }
   SK._calcAdaptiveBatch0 = _calcAdaptiveBatch0; // 測試 seam(youtube-adaptive-batch0.spec)
@@ -2872,7 +2883,7 @@
     //          快速顯示前幾條,但接下來 batch 1 size=12 要 ~3-5s 才完,使用者中間視覺
     //          上像 freeze。縮到 4 讓「第 5-N 條」中文也快點冒,代價是 token 攤提變差
     //          (143 t/seg → 194 t/seg,+35%),但 isUrgent 場景 token 不是優先考量。
-    const BATCH = options?.isUrgent ? 4 : 12;
+    const BATCH = options?.isUrgent ? 4 : 8;
     // 批次 8 C6:ladder 抽單一資料源 _calcAdaptiveBatch0
     const { wallLeadMs, firstBatchSize } = _calcAdaptiveBatch0(windowStartMs);
     YT.firstBatchSize = firstBatchSize;
@@ -2915,8 +2926,11 @@
         const results = res.result || [];
         for (let j = 0; j < batchUnits.length; j++) {
           const unit = batchUnits[j];
-          // v1.8.10 A:strip LLM 偷懶殘留的 SEP / «N» 標記
-          const trans = SK.sanitizeMarkers(String(results[j] || unit.text).trim());
+          // v1.8.10 A:strip LLM 偷懶殘留的 SEP / «N» 標記與標點
+          const markerClean = SK.sanitizeMarkers(results[j] || unit.text);
+          const trans = typeof SK.stripSubtitlePunctuation === 'function'
+            ? SK.stripSubtitlePunctuation(markerClean)
+            : markerClean;
           let normTrans = trans;
           if (unit.keys.length === 1) {
             YT.captionMap.set(unit.keys[0], trans);
@@ -3222,12 +3236,8 @@
       //   8 條/批 × 0.6 條/秒 ≈ 13 秒的字幕 → 30 秒視窗有 2–3 批，串流注入生效。
       // 另一效果：每批 input tokens 減半，API 處理時間從 ~17s 降至 ~7s，
       // adapt look 自然收斂到更小值，buffer overrun 次數減少。
-      // v1.9.19: BATCH 8 → 12。直接 Gemini benchmark 量到 size=8/12/16 的 median elapsed
-      //   分別 2.7s / 2.5s / 4.0s,input token / 段在 size=8 是 194 t,size=12 降到 143 t
-      //   (~26% 攤提),size=16 降到 117 t(再 18%)。12 是 elapsed 持平處的甜蜜點:
-      //   token 攤提 ~26% 但 elapsed 不變,純贏;再往上 16 elapsed 跳 60%,留給 batch 0
-      //   adaptive ramp(lead 充裕時)。
-      const BATCH = 12;
+      // v1.9.19 / v2.2.0: 字幕批次大小由 12 調為 8（實測 8 段 7.4s 零標點，12 段 13.5s 易標點洩漏且延遲跳倍）
+      const BATCH = 8;
       const preserve = true; // v1.2.38 起固定開啟，已移除設定頁 toggle
       const units = buildTranslationUnits(windowSegs, preserve);
       try {
@@ -3296,8 +3306,11 @@
           }
           for (let j = 0; j < batchUnits.length; j++) {
             const unit     = batchUnits[j];
-            // v1.8.10 A:寫 captionMap 之前先 strip LLM 偷懶殘留的 SEP / «N» 標記
-            const rawTrans = SK.sanitizeMarkers(results[j] || unit.text);
+            // v1.8.10 A:寫 captionMap 之前先 strip LLM 偷懶殘留的 SEP / «N» 標記與標點
+            const markerClean = SK.sanitizeMarkers(results[j] || unit.text);
+            const rawTrans = typeof SK.stripSubtitlePunctuation === 'function'
+              ? SK.stripSubtitlePunctuation(markerClean)
+              : markerClean;
             if (unit.keys.length === 1) {
               YT.captionMap.set(unit.keys[0], rawTrans);
             } else {

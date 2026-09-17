@@ -541,6 +541,20 @@ if (window.__shinkansen_loaded) {
       .trim();
   };
 
+  // v2.2.1: 零標點純文字字幕消毒器 — 移除標點符號，逗號/分號/句號/冒號等換為半形空格，
+  // 保留數字小數點（如 3.5）與千分位逗號（如 $2,000），消除所有視覺漏網標點。
+  SK.stripSubtitlePunctuation = function stripSubtitlePunctuation(text) {
+    if (text == null) return '';
+    let s = String(text);
+    s = s.replace(/[，。！？；：、]+/g, ' ');
+    s = s.replace(/[「」『』“”‘’"'《》〈〉（）()\[\]【】{}—–_~`]/g, '');
+    s = s.replace(/(?:\.{3,}|…+)/g, ' ');
+    s = s.replace(/[!?;:]+/g, ' ');
+    s = s.replace(/(?<!\d),|,(?!\d)/g, ' ');
+    s = s.replace(/(?<!\d)\.|\.(?!\d)/g, ' ');
+    return s.replace(/\s+/g, ' ').trim();
+  };
+
   // ─── 翻譯流程常數 ─────────────────────────────────────
   // 注意：content script 無法 import ES module，以下兩個值鏡像 lib/constants.js，
   // 修改時必須同步更新 lib/constants.js（lib/gemini.js 與 lib/storage.js 的單一來源）。

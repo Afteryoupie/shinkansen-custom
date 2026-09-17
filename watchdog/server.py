@@ -59,6 +59,26 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
 
         # ── REST API 端點 ────────────────────────────────────
 
+        # 0. GET /health or /api/health：健康檢查端點
+        if (path == "/health" or path == "/api/health") and method == "GET":
+            llm_alive = state.llm_proc and state.llm_proc.poll() is None
+            payload = {
+                "status": "ok",
+                "llm_status": "running" if llm_alive else ("starting" if state.is_starting else "sleeping"),
+                "current_model": state.current_model["name"] if state.current_model else "",
+            }
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            resp = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: application/json; charset=utf-8\r\n"
+                f"Access-Control-Allow-Origin: *\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                f"Connection: close\r\n\r\n"
+            ).encode("utf-8") + body
+            client_writer.write(resp)
+            await client_writer.drain()
+            return
+
         # 1. GET /api/status：回傳當前狀態與模型列表（供 Swift Menu Bar 輪詢）
         if path == "/api/status" and method == "GET":
             state.models = scan_models()

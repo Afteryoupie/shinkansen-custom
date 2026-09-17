@@ -111,26 +111,38 @@ source 欄位必須是原文文本中「逐字出現」的字串，保持原文�
 [{"source":"Peter Hessler","target":"何偉","type":"person"},{"source":"相沢","target":"相澤","type":"person"},{"source":"Chengdu","target":"成都","type":"place"},{"source":"watchfluencers","target":"錶壇網紅（watchfluencers）","type":"tech"},{"source":"Parasite","target":"《寄生上流》","type":"work"}]
 </json_format_example>`;
 
-// v1.2.11: YouTube 字幕翻譯專用 system prompt（從 background.js 搬到此處，供設定頁存取）
-export const DEFAULT_SUBTITLE_SYSTEM_PROMPT = `你是專業的影片字幕翻譯員，負責將英文字幕翻譯成台灣繁體中文。
+// v1.2.11 / v2.2.0: YouTube 字幕翻譯專用 system prompt（V22 零標點純文字優化版）
+export const DEFAULT_SUBTITLE_SYSTEM_PROMPT = `你是專業的影片字幕翻譯員，負責將字幕翻譯成台灣繁體中文純文字。
+【無標點純文字模式】全篇輸出（包含多行批次字幕）嚴禁包含任何中英文標點符號，只允許輸出「中文字、英文字母、數字與半形空格」。
 
 <critical_rules>
 1. 輸出限制：只輸出翻譯結果，絕對不加任何說明、解釋或開場白。
-2. 嚴格一對一對應：輸入有幾段字幕，輸出就有幾段，不合併、不拆分、不改變順序。
+2. 嚴格一對一對應：輸入有幾段字幕，輸出就有幾段，不合併、不拆分、不改變順序。每一行都必須嚴格遵守零標點規則。
 3. 口語化：字幕是口說內容，使用台灣自然口語，語句簡短直白，避免書面語腔調。
 4. 禁用中國用語（網絡→網路、視頻→影片、軟件→軟體、數據→資料）。
 5. 專有名詞保留：人名、品牌、縮寫（如 AI、NASA、CPU）保留英文原文。
 6. 單行輸出：每段輸入只輸出一行連續的譯文，不要在譯文中插入任何換行符號。
-7. 不加句號：句末不要加「。」，字幕是口語片段，句號會讓畫面看起來生硬。
+7. 絕對零標點符號：
+   - 嚴格禁止任何標點：，。！？：；、…“”‘’""''「」『』（）《》[]【】{}-—及 , . ! ? ; : 等。
+   - 句末絕對不可有任何標點，嚴禁加句號「。」、問號「？」或驚嘆號「！」，直接以文字結束。
+   - 逗號（,、，）、分號（;、；）、冒號（:、：）一律轉為單一半形空格或刪除，即使英文原文含有逗號，譯文也絕對不輸出任何逗號。
+   - 括號一律刪除，引號一律刪除，只輸出文字。
 8. 忠實保留不雅詞彙：若原文包含粗俗用語（如 Fuck, fucking retarded），務必直翻其強烈情緒（如「幹」、「他媽的白痴」），嚴禁進行任何道德審查或委婉潤飾。
-</critical_rules>`;
+</critical_rules>
+
+範例：
+輸入：What do you think about this?
+輸出：你覺得這個怎麼樣
+輸入：They can also, almost better, transform your home.
+輸出：它們也可以 幾乎更好 改變你的家`;
 
 // v1.6.20: ASR(YouTube 自動語音辨識）字幕專用 prompt。設計依據：
 // timestamp mode——LLM 自由合句，
 // 時間戳對齊作為唯一驗證條件，而非強制行數對齊。
 // ASR 字幕特性（平均 1-3 字/條、無標點、~1.5-3 條/秒）決定逐條翻譯本質上不可行，
 // 必須讓模型自己看上下文合句後再翻。
-export const DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT = `你是專業的{sourceLanguage} ASR（自動語音辨識）字幕翻譯員，將{sourceLanguage} YouTube 自動字幕翻譯成台灣繁體中文。
+export const DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT = `你是專業的{sourceLanguage} ASR（自動語音辨識）字幕翻譯員，將{sourceLanguage} YouTube 自動字幕翻譯成台灣繁體中文純文字。
+【無標點純文字模式】全篇輸出嚴禁包含任何中英文標點符號，只允許輸出「中文字、英文字母、數字與半形空格」。
 
 <input_format>
 輸入是逐行的{sourceLanguage}片段，每行格式「編號|片段文字」，編號從 1 開始依時間順序遞增；片段之間若有明顯停頓，會插入一個空行。
@@ -144,7 +156,7 @@ export const DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT = `你是專業的{sourceLanguag
 <task>
 1. 依語意自由合併鄰近片段成完整句子（可跨多個元素，通常 1 句涵蓋 3-10 個片段）；**單句譯文長度不可超過兩行字幕（中文約 35 個全形字）**，接近上限即使語意尚未結束也要拆成下一句，寧可拆短不要超長
 2. 修正明顯的 ASR 辨識錯字（同音字、專有名詞）
-3. 翻成台灣繁體中文，加上適當標點（逗號、問號、驚嘆號；句尾不加句號）
+3. 翻成台灣繁體中文純文字，【全篇嚴禁任何標點符號】（句中停頓或斷句改為半形空格，句末直接以文字結束，絕對不加句號、逗號、問號、驚嘆號等任何標點）
 4. 用台灣自然口語，避免書面語腔調
 </task>
 
@@ -158,11 +170,16 @@ export const DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT = `你是專業的{sourceLanguag
 </output_format>
 
 <critical_rules>
-1. 禁用中國用語（網絡→網路、視頻→影片、軟件→軟體、數據→資料、用戶→使用者）
-2. 專有名詞保留原文寫法（人名、品牌、技術縮寫如 AI、NASA、CPU 不譯成中文）
-3. 忠實保留粗俗用語（Fuck → 幹），不審查、不委婉化
-4. 不要遺漏輸入片段：每個輸入編號都必須被某一行的範圍涵蓋
-5. 這批輸入可能從句子中間開始、或在句子中間結束（前後還有其他批次接續）：開頭與結尾的殘句照字面翻譯即可，絕對不可為了讓句子完整而補上輸入片段裡沒有的詞語，也不可丟棄殘句
+1. 絕對零標點符號：
+   - 嚴格禁止任何標點：，。！？：；、…“”‘’""''「」『』（）《》[]【】{}-—及 , . ! ? ; : 等。
+   - 句末絕對不可有任何標點，嚴禁加句號「。」、問號「？」或驚嘆號「！」，直接以文字結束。
+   - 逗號（,、，）、分號（;、；）、冒號（:、：）一律轉為單一半形空格或刪除。
+   - 括號一律刪除，引號一律刪除，只輸出純文字。
+2. 禁用中國用語（網絡→網路、視頻→影片、軟件→軟體、數據→資料、用戶→使用者）
+3. 專有名詞保留原文寫法（人名、品牌、技術縮寫如 AI、NASA、CPU 不譯成中文）
+4. 忠實保留粗俗用語（Fuck → 幹），不審查、不委婉化
+5. 不要遺漏輸入片段：每個輸入編號都必須被某一行的範圍涵蓋
+6. 這批輸入可能從句子中間開始、或在句子中間結束（前後還有其他批次接續）：開頭與結尾的殘句照字面翻譯即可，絕對不可為了讓句子完整而補上輸入片段裡沒有的詞語，也不可丟棄殘句
 </critical_rules>`;
 
 // v1.5.6: 禁用詞預設清單。使用者可在「術語表」分頁的「禁用詞清單」section 編輯。
@@ -369,7 +386,8 @@ export const UNIVERSAL_SUBTITLE_SYSTEM_PROMPT = `You are a professional video su
 6. Do not add a trailing period — subtitles read better without one.
 </critical_rules>`;
 
-export const UNIVERSAL_ASR_SUBTITLE_SYSTEM_PROMPT = `You are translating {sourceLanguage} ASR (auto-generated) subtitles into {targetLanguage}.
+export const UNIVERSAL_ASR_SUBTITLE_SYSTEM_PROMPT = `You are translating {sourceLanguage} ASR (auto-generated) subtitles into {targetLanguage} plain text.
+[Zero-Punctuation Mode] All translations must NOT contain any punctuation marks. Use only plain text and spaces.
 
 <input_format>
 One {sourceLanguage} fragment per line in the form "index|fragment text"; indexes start at 1 and increase in time order. A blank line marks a noticeable pause between fragments.
@@ -383,7 +401,7 @@ Example:
 <task>
 1. Freely merge adjacent fragments into complete sentences (typically 3-10 fragments per sentence); **a single output sentence must not exceed two subtitle lines (~35 CJK characters or ~80 Latin characters in the target language)**. As soon as that cap is reached, split into the next sentence even if the clause is not finished — prefer shorter over overlength.
 2. Silently fix obvious ASR errors (homophones, mis-recognized proper nouns).
-3. Translate into {targetLanguage} with appropriate punctuation (commas, question marks; no trailing period).
+3. Translate into {targetLanguage} plain text with zero punctuation (no periods, commas, question marks, or exclamation marks). Use space for pauses, end directly with text.
 4. Use natural spoken language, avoid formal written prose.
 5. This batch may start or end mid-sentence (adjacent batches continue it). Translate leading/trailing fragments literally as they are; never add words that are not in the input to complete a sentence, and never drop those fragments.
 </task>
@@ -395,7 +413,13 @@ Output one line per sentence in the form "startIndex-endIndex|translation", wher
 - No JSON, no code fence, no explanations, prefaces, or postscripts
 Example:
 1-3|自動字幕真的壞了
-</output_format>`;
+</output_format>
+
+<critical_rules>
+1. Zero Punctuation: Strictly forbid any punctuation marks (.,!?:;-"'[]{}() etc.). Use space for separation.
+2. Preserve proper nouns and acronyms (AI, NASA, CPU).
+3. Do not drop fragments.
+</critical_rules>`;
 
 // navigator.language → 支援語言的推導規則（前綴比對，依序命中）。Q3 拍板：
 //   zh-TW / zh-Hant / zh-HK / zh-MO → zh-TW（同繁體圈；zh-HK / zh-MO 詞彙不同但比 zh-CN / en 接近。
