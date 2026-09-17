@@ -1,4 +1,4 @@
-$Host.UI.RawUI.WindowTitle = "LLM 智慧守護代理 (停止中)"
+﻿$Host.UI.RawUI.WindowTitle = "LLM 智慧守護代理 (停止中)"
 Write-Host "正在關閉 LLM 守護代理並釋放顯存..." -ForegroundColor Yellow
 
 try {
