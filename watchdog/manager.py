@@ -149,6 +149,44 @@ async def is_llm_ready() -> bool:
     except Exception:
         return False
 
+def calculate_optimal_context(model_path: str, model_name: str) -> int:
+    """
+    根據硬體顯存 (預設 RX 9070 GRE 12GB) 與模型大小動態計算最高安全 Context 上限：
+    - <= 14B 模型且剩餘顯存充足 (>= 3.0GB)：開滿 32768 (32K)
+    - 9B-14B 較大權重或剩餘顯存中等 (>= 1.4GB)：開到 16384 (16K)
+    - 27B+ 大模型或顯存緊張：8192 (8K，Shinkansen 與字幕翻譯安全底線)
+    """
+    total_vram_mb = 12224  # 預設 12GB (RX 9070 GRE)
+    usable_vram_mb = max(1000, total_vram_mb - 1536)  # 扣除 1.5GB 系統緩衝
+
+    try:
+        model_mb = os.path.getsize(model_path) / (1024 * 1024)
+    except Exception:
+        model_mb = 6000
+
+    mmproj = find_matching_mmproj(model_name)
+    if mmproj and os.path.exists(mmproj):
+        try:
+            model_mb += os.path.getsize(mmproj) / (1024 * 1024)
+        except Exception:
+            pass
+
+    remaining_mb = usable_vram_mb - model_mb
+    lower_name = model_name.lower()
+    is_large_param = any(k in lower_name for k in ["27b", "30b", "32b", "34b", "70b"])
+
+    if is_large_param:
+        if remaining_mb >= 2500:
+            return 16384
+        return 8192
+    else:
+        if remaining_mb >= 3000:
+            return 32768
+        elif remaining_mb >= 1400:
+            return 16384
+        else:
+            return 8192
+
 async def start_llm() -> bool:
     """按需啟動推論引擎進程 (Rapid-MLX 或 Llama.cpp)"""
     if state.lock is None:
@@ -175,11 +213,11 @@ async def start_llm() -> bool:
 
         m = state.current_model
         state.is_starting = True
-        print(f"\n[⚡ 啟動] 正在拉起本地模型: {m['name']} ({m['type'].upper()})...", flush=True)
 
         try:
             if m["type"] == "gguf":
-                ctx = "4096" if m["is_translation"] else "8192"
+                ctx = str(calculate_optimal_context(m["path"], m["name"]))
+                print(f"\n[⚡ 啟動] 正在拉起本地模型: {m['name']} ({m['type'].upper()}, Context: {ctx})...", flush=True)
                 cmd = [
                     str(LLAMA_BIN),
                     "--model", m["path"],
@@ -205,7 +243,7 @@ async def start_llm() -> bool:
                     "--log-level", "warning",
                 ]
             else:
-                max_tokens = "2048" if m["is_translation"] else "4096"
+                max_tokens = str(calculate_optimal_context(m["path"], m["name"]))
                 if RAPID_BIN.is_file() and os.access(RAPID_BIN, os.X_OK):
                     cmd = [
                         str(RAPID_BIN), "serve",

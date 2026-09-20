@@ -275,6 +275,9 @@ async function load() {
   // v1.6.23: ASR 分句改單一 toggle——開啟=progressive（混合模式）、關閉=heuristic（預設分句）。
   // 舊 'llm' 值視為 progressive（行為相近，LLM 結果仍會顯示；只是改成漸進方式）。
   $('ytAsrProgressive').checked = yt.asrMode !== 'heuristic';
+  if ($('ytJevEnabled')) $('ytJevEnabled').checked = yt.jevEnabled === true;
+  if ($('ytJevApiKey')) $('ytJevApiKey').value = yt.jevApiKey || '';
+  if ($('ytJevApiUrl')) $('ytJevApiUrl').value = yt.jevApiUrl || 'https://api.typesafe.ai/v1/systemone';
   // v1.5.8: 字幕是否套用固定術語表 / 黑名單
   $('ytApplyFixedGlossary').checked  = yt.applyFixedGlossary  === true;
   $('ytApplyForbiddenTerms').checked = yt.applyForbiddenTerms === true;
@@ -1058,6 +1061,9 @@ async function _saveImpl() {
       autoTranslate:      $('ytAutoTranslate').checked,
       // v1.6.23: ASR 分句單一 toggle——checked=progressive（混合）、unchecked=heuristic
       asrMode: $('ytAsrProgressive').checked ? 'progressive' : 'heuristic',
+      jevEnabled: $('ytJevEnabled')?.checked === true,
+      jevApiKey:  $('ytJevApiKey')?.value?.trim() || '',
+      jevApiUrl:  $('ytJevApiUrl')?.value?.trim() || 'https://api.typesafe.ai/v1/systemone',
       // v1.5.8: 字幕是否套用固定術語表 / 黑名單
       applyFixedGlossary:  $('ytApplyFixedGlossary').checked,
       applyForbiddenTerms: $('ytApplyForbiddenTerms').checked,

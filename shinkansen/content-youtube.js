@@ -1028,7 +1028,6 @@
   //   - 翻譯成本只在「翻譯」這一步,合句不耗 token
   //
   // 限制:
-  //   - 詞彙列表是英文專用。其他語言需另寫詞彙列表(目前 ASR XHR URL 一律 lang=en)。
   //   - 啟發式不像 LLM 能看上下文,某些模糊邊界會切錯——這就是 progressive mode 用 LLM 覆蓋的價值。
 
   const _ASR_BREAK_WORDS = new Set([
@@ -1047,16 +1046,52 @@
     'mean', 'why', 'this', 'has', 'make', 'gpt', 'p.m', 'a.m'];
   const _ASR_START_WORDS = ['or', 'to', 'in', 'has', 'of', 'are', 'is', 'lines',
     'with', 'days', 'years', 'tokens'];
+
+  // 日語 ASR 專用斷句與語意助詞列表
+  const _ASR_BREAK_WORDS_JA = new Set([
+    'けど', 'けれど', 'けれども', 'ですが', 'ので', 'から', 'そして', 'それで',
+    'だから', 'でも', 'しかし', 'じゃあ', 'さて', 'ところで', 'また', 'あと',
+    'ね', 'よ', 'よね', 'わ', 'ぞ', 'さ', 'えーと', 'あの', 'はい', 'うん', 'そうです', 'なるほど'
+  ]);
+  const _ASR_SKIP_WORDS_JA = new Set(['えー', 'あのー', 'うーん', 'えっと', 'まあ']);
+  const _ASR_END_WORDS_JA = [
+    'です', 'ます', 'でした', 'ました', 'だ', 'だった', 'んだ', 'よね', 'かな',
+    'ぞ', 'よ', 'ね', 'わ', 'の', 'こと', 'もの', 'て', 'で'
+  ];
+  const _ASR_START_WORDS_JA = [
+    'また', 'そして', 'それで', 'だから', 'でも', 'しかし', 'あと', 'じゃあ', 'つまり', '要するに'
+  ];
+
   const _ASR_BREAK_MINI_TIME = 300;
   const _ASR_MIN_INTERVAL = 1000;       // gap < 此值視為同句
   const _ASR_MIN_WORD_LENGTH = 3;       // 短句吞併:條數 ≤ 此值才考慮合到前句
   const _ASR_SENTENCE_MIN_WORD = 20;    // 合句總條數上限(吞併用)
   const _ASR_MAX_WORDS = 30;            // Ile 合併後 word 上限
 
+  // 計算 ASR 文本長度單位（西文計 word，CJK 計字符數）
+  function _countAsrUnits(text, lang) {
+    if (!text) return 0;
+    if (/^(ja|zh|ko)/i.test(lang || '')) {
+      const cjk = (text.match(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/g) || []).length;
+      const words = text.replace(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+      return cjk + words;
+    }
+    return text.split(/\s+/).filter(Boolean).length;
+  }
+
   // lang：字幕軌語言（決定行間接合字元，見 joinSegTexts）；省略 = 目前 YT 字幕軌語言
   function _heuristicMergeAsr(rawSegments, lang) {
     if (lang === undefined) lang = SK.YT?.captionLang || null;
     if (!rawSegments?.length) return [];
+
+    const isJa = /^ja/i.test(lang || '');
+    const isCjk = /^(ja|zh|ko)/i.test(lang || '');
+
+    const breakWords = isJa ? _ASR_BREAK_WORDS_JA : _ASR_BREAK_WORDS;
+    const skipWords  = isJa ? _ASR_SKIP_WORDS_JA  : _ASR_SKIP_WORDS;
+    const startWords = isJa ? _ASR_START_WORDS_JA : _ASR_START_WORDS;
+    const endWords   = isJa ? _ASR_END_WORDS_JA   : _ASR_END_WORDS;
+    const maxUnits   = isCjk ? 45 : _ASR_MAX_WORDS;
 
     // 統一格式:每條包 utf8 / tStartMs / isBreak / 原始 ref(供組裝結果用)
     const events = rawSegments.map(s => ({
@@ -1083,13 +1118,16 @@
         const sameEvent = c.groupId != null && prev && prev.groupId === c.groupId;
         const m = sameEvent ? 0 : c.tStartMs - baseMs;
         const cTrim = c.utf8.trim().toLowerCase();
-        if (_ASR_BREAK_WORDS.has(cTrim) && m > _ASR_BREAK_MINI_TIME) {
+
+        // 檢查當前片段是否命中斷句詞
+        const isBreakWord = breakWords.has(cTrim) || (isJa && [...breakWords].some(w => cTrim.endsWith(w) || cTrim.startsWith(w)));
+        if (isBreakWord && m > _ASR_BREAK_MINI_TIME) {
           pushBreak(c, [c]); continue;
         }
-        if (next && _ASR_BREAK_WORDS.has((c.utf8 + next.utf8).trim().toLowerCase()) && m > _ASR_BREAK_MINI_TIME) {
+        if (next && breakWords.has((c.utf8 + next.utf8).trim().toLowerCase()) && m > _ASR_BREAK_MINI_TIME) {
           pushBreak(c, [c, next]); i++; continue;
         }
-        if (_ASR_SKIP_WORDS.has(cTrim) && next) {
+        if (skipWords.has(cTrim) && next) {
           baseMs = next.tStartMs; cur.push(next); i++; continue;
         }
         if (m <= _ASR_MIN_INTERVAL) {
@@ -1105,10 +1143,9 @@
     function Ile(groups) {
       if (groups.length <= 1) return groups;
       // 批次 8 C11:escape regex 特殊字元——'p.m'/'a.m' 的 '.' 未 escape 時 match
-      // 「p 任意字 m」,"ppm"/"pam" 都誤命中 end-word 觸發合併
       const _reEsc = (w) => w.replace(/[.*+?^$\{\}()|[\]\\]/g, '\\$&');
-      const startRe = new RegExp(`^\\s*(${_ASR_START_WORDS.map(_reEsc).join('|')})$`, 'i');
-      const endRe = new RegExp(`\\b(${_ASR_END_WORDS.map(_reEsc).join('|')})\\s*$`, 'i');
+      const startRe = new RegExp(isJa ? `(${startWords.map(_reEsc).join('|')})` : `^\\s*(${startWords.map(_reEsc).join('|')})$`, 'i');
+      const endRe   = new RegExp(isJa ? `(${endWords.map(_reEsc).join('|')})\\s*$` : `\\b(${endWords.map(_reEsc).join('|')})\\s*$`, 'i');
       const result = [groups[0]];
       for (let u = 0; u < groups.length - 1; u++) {
         const cur = result[result.length - 1];
@@ -1117,8 +1154,9 @@
         const gap = nextFirst.tStartMs - last.tStartMs;
         const matched = nextFirst.utf8.match(startRe) || last.utf8.match(endRe);
         if (matched && !nextFirst.isBreak && gap <= _ASR_MIN_INTERVAL) {
-          const wordCount = joinSegTexts([...cur, ...groups[u + 1]].map(e => e.utf8), lang).split(/\s+/).filter(Boolean).length;
-          if (wordCount <= _ASR_MAX_WORDS) {
+          const mergedText = joinSegTexts([...cur, ...groups[u + 1]].map(e => e.utf8), lang);
+          const unitCount = _countAsrUnits(mergedText, lang);
+          if (unitCount <= maxUnits) {
             cur.push(...groups[u + 1]);
             continue;
           }
@@ -1131,11 +1169,13 @@
     // ─── Lle: 短句吞併(從尾到頭,小群組合到前一群) ────
     function Lle(groups) {
       const out = [...groups];
+      const minWordLen = isCjk ? 6 : _ASR_MIN_WORD_LENGTH;
+      const sentenceMax = isCjk ? 35 : _ASR_SENTENCE_MIN_WORD;
       for (let a = out.length - 1; a > 0; a--) {
         const o = out[a];
         const s = out[a - 1];
-        if (o.length <= 0 || o.length > _ASR_MIN_WORD_LENGTH) continue;
-        if (o.length + s.length >= _ASR_SENTENCE_MIN_WORD) continue;
+        if (o.length <= 0 || o.length > minWordLen) continue;
+        if (o.length + s.length >= sentenceMax) continue;
         if (o[0].tStartMs - s[s.length - 1].tStartMs > _ASR_MIN_INTERVAL) continue;
         if (o[0].isBreak) continue;
         s.push(...o);

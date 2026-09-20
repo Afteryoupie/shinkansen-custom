@@ -2,6 +2,7 @@
 // 職責：接收翻譯請求、呼叫 Gemini API、處理快取、處理快捷鍵、統一除錯 Log。
 
 import { browser } from './lib/compat.js';
+import { JevDecisionEngine } from './lib/jev.js';
 import { IS_IOS_BUILD } from './lib/distribution.js'; // Phase 2: host app 設定橋接只在 iOS build 走 native messaging
 import { translateBatch, extractGlossary, extractTermRenderings, translateBatchStream, summarizeArticle } from './lib/gemini.js';
 import { translateBatch as translateBatchCustom, extractGlossary as extractGlossaryCustom } from './lib/openai-compat.js'; // v1.5.7
@@ -577,7 +578,7 @@ async function persistStickyTabs() {
 // Firefox 同樣支援這個 API（webNavigation polyfill 在 lib/compat.js 有 fallback 處理）。
 if (browser.webNavigation && browser.webNavigation.onCreatedNavigationTarget) {
   browser.webNavigation.onCreatedNavigationTarget.addListener(async (details) => {
-    const s = await getSettings();
+    const s = await getSettingsCached();
     if (s.crossTabSticky !== true) return; // 預設關閉自動跨分頁繼承
     await hydrateStickyTabs();
     const sourceTabId = details.sourceTabId;
@@ -637,6 +638,70 @@ async function _handleAsrSubtitleBatch(payload, sender, cacheTag, namespace) {
 // 網頁翻譯的 15s 假設（gemini.js FETCH_TIMEOUT_MS）對「每批可達 50 段長文」不成立,
 // 詳見兩個 handler 內的註解
 const DOC_FETCH_TIMEOUT_MS = 120_000;
+
+// v2.5.0: Jev 類型化決策過濾包裝函式
+async function applyJevSubtitleFilter(payload, settings, doTranslateFn) {
+  const yt = settings.ytSubtitle || {};
+  if (!yt.jevEnabled || !Array.isArray(payload?.texts) || payload.texts.length === 0) {
+    return doTranslateFn(payload);
+  }
+
+  const jev = new JevDecisionEngine({
+    enabled: yt.jevEnabled,
+    apiKey: yt.jevApiKey,
+    apiUrl: yt.jevApiUrl,
+  });
+
+  const texts = payload.texts;
+  const verdicts = await jev.evaluateBatch(texts, settings.targetLanguage);
+
+  const needsTransIndices = [];
+  const toTranslateTexts = [];
+
+  for (let i = 0; i < texts.length; i++) {
+    const v = verdicts[i];
+    if (v && v.is_valid && v.needs_translation) {
+      needsTransIndices.push(i);
+      toTranslateTexts.push(texts[i]);
+    }
+  }
+
+  // 若全部都需要翻譯，直接走原翻譯邏輯
+  if (needsTransIndices.length === texts.length) {
+    return doTranslateFn(payload);
+  }
+
+  // 建立結果陣列
+  const finalResults = new Array(texts.length).fill('');
+  for (let i = 0; i < texts.length; i++) {
+    const v = verdicts[i];
+    if (!v || !v.is_valid) {
+      finalResults[i] = '';
+    } else if (!v.needs_translation) {
+      finalResults[i] = texts[i];
+    }
+  }
+
+  // 若有需要翻譯的子集，呼叫翻譯引擎
+  let translationUsage = null;
+  if (toTranslateTexts.length > 0) {
+    const subPayload = { ...payload, texts: toTranslateTexts };
+    const subRes = await doTranslateFn(subPayload);
+    if (!subRes?.ok) return subRes;
+    translationUsage = subRes.usage;
+    const translatedSub = subRes.result || [];
+    for (let j = 0; j < needsTransIndices.length; j++) {
+      finalResults[needsTransIndices[j]] = translatedSub[j] || toTranslateTexts[j];
+    }
+  }
+
+  return {
+    ok: true,
+    result: finalResults,
+    usage: translationUsage,
+    jevFiltered: true,
+  };
+}
 
 // ─── 訊息路由（handler map 取代 if-else 鏈） ──────────────────
 const messageHandlers = {
@@ -810,14 +875,13 @@ const messageHandlers = {
       // ytSubtitle.pricing 非空時傳入，讓 handleTranslate 用正確計價計算費用
       const pricingOverride = (yt.pricing && yt.pricing.inputPerMTok != null) ? yt.pricing : null;
       // v1.5.8: 字幕路徑預設不套用固定術語表 / 黑名單，使用者可在 YouTube 字幕分頁開 toggle
-      return handleTranslate(payload, sender, geminiOverrides, pricingOverride, '_yt',
+      return applyJevSubtitleFilter(payload, s, (p) => handleTranslate(p, sender, geminiOverrides, pricingOverride, '_yt',
         yt.applyFixedGlossary === true,
         yt.applyForbiddenTerms === true,
-        // §3.6-4：客製字幕 prompt / 非預設 temperature 進 key
         {
           customPrompt: customPromptForKey(yt.systemPrompt, getEffectiveSubtitleSystemPrompt),
           temperatureDefault: DEFAULT_SETTINGS.ytSubtitle.temperature,
-        });
+        }));
     },
   },
   // v1.6.20: ASR(YouTube 自動字幕）專用——LLM 自由合句 + 時間戳對齊路徑（D' 模式，
@@ -994,10 +1058,10 @@ const messageHandlers = {
       // ASR 自訂路徑對齊：依 target 選 UNIVERSAL / zh-TW 版，使用者客製 prompt 照常優先。
       const overrides = { systemPrompt: getEffectiveSubtitleSystemPrompt(s.targetLanguage, yt.systemPrompt) };
       // v1.5.8: 字幕路徑同 Gemini 字幕路徑，預設不套用固定術語表 / 黑名單
-      return handleTranslateCustom(payload, sender, '_oc_yt', overrides,
+      return applyJevSubtitleFilter(payload, s, (p) => handleTranslateCustom(p, sender, '_oc_yt', overrides,
         yt.applyFixedGlossary === true,
         yt.applyForbiddenTerms === true,
-        { customPrompt: customPromptForKey(yt.systemPrompt, getEffectiveSubtitleSystemPrompt) });
+        { customPrompt: customPromptForKey(yt.systemPrompt, getEffectiveSubtitleSystemPrompt) }));
     },
   },
   // YouTube ASR 自動字幕走自訂 Provider 時的入口。沿用 customProvider 的
@@ -1077,7 +1141,10 @@ const messageHandlers = {
   // v1.4.0: Google Translate 字幕翻譯（快取 key 用 _gt_yt 後綴）
   TRANSLATE_SUBTITLE_BATCH_GOOGLE: {
     async: true,
-    handler: (payload, sender) => handleTranslateGoogle(payload, sender, '_gt_yt'),
+    handler: async (payload, sender) => {
+      const s = await getSettingsCached();
+      return applyJevSubtitleFilter(payload, s, (p) => handleTranslateGoogle(p, sender, '_gt_yt'));
+    },
   },
   EXTRACT_GLOSSARY: {
     async: true,

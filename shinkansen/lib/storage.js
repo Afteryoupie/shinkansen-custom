@@ -754,6 +754,10 @@ export const DEFAULT_SETTINGS = {
     // 的 overlay（原生字級 × scale/100）+ iPhone／iPad 原生全螢幕的 video::cue font-size。
     // 預設 100 = 跟隨各平台原生字幕大小（桌面零改變）。設定在 popup,只在 YouTube 影片頁顯示。
     captionScale: 100,
+    // v2.5.0: Jev 類型化決策引擎 (System One) 字幕過濾與智慧分流
+    jevEnabled: false,
+    jevApiKey: '',
+    jevApiUrl: 'https://api.typesafe.ai/v1/systemone',
   },
   // 失敗重試次數(429 / 網路錯誤時 fetchWithRetry 的退避重試上限)
   maxRetries: 3,

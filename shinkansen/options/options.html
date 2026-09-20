@@ -1126,6 +1126,30 @@
     </section>
 
     <section>
+      <h2>⚡ JEV 類型化決策 (System One)</h2>
+      <p class="muted">
+        利用 Jev 進行次秒級類型化決策，自動過濾雜訊/純音效標籤（如 [Music]、[Applause]、♪）並智慧分流繁中/通用詞，免除無謂 LLM 呼叫。未啟用或逾時時自動無縫降級走本地啟發式規則。
+      </p>
+      <label class="checkbox-label">
+        <input type="checkbox" id="ytJevEnabled">
+        <strong>開啟 JEV 決策過濾</strong>
+        <small class="muted">
+          開啟時自動執行字幕有效性與翻譯需求判定；可填入 TypeSafe AI API Key，或留空使用純本地啟發式決策。
+        </small>
+      </label>
+      <div id="yt-jev-config-block" style="margin-top: 8px;">
+        <label>
+          <span>JEV API Key（可選）</span>
+          <input type="password" id="ytJevApiKey" placeholder="留空時自動走純本地規則">
+        </label>
+        <label>
+          <span>JEV API URL</span>
+          <input type="text" id="ytJevApiUrl" placeholder="https://api.typesafe.ai/v1/systemone">
+        </label>
+      </div>
+    </section>
+
+    <section>
       <h2 data-i18n="options.yt.engine.heading">翻譯引擎</h2>
       <label>
         <span data-i18n="options.yt.engine.label">引擎</span>
