@@ -1565,8 +1565,7 @@
   const _injectedSegmentText = new WeakMap();
 
   function _setSegmentText(el, text) {
-    const clean = typeof SK.stripSubtitlePunctuation === 'function' ? SK.stripSubtitlePunctuation(text) : text;
-    const str = clean == null ? '' : String(clean);
+    const str = text == null ? '' : String(text);
     if (!str) {
       if (el.textContent !== '') el.textContent = '';
       _injectedSegmentText.set(el, '');
@@ -1607,8 +1606,7 @@
       srcEl = host.shadowRoot.querySelector('.src');
       if (!tgtEl) return; // 還是失敗就放棄(不該發生)
     }
-    const cleanTarget = typeof SK.stripSubtitlePunctuation === 'function' ? SK.stripSubtitlePunctuation(targetText) : targetText;
-    if (!cleanTarget) {
+    if (!targetText) {
       if (tgtEl.innerHTML !== '') tgtEl.innerHTML = '';
       if (srcEl) {
         if (srcEl.innerHTML !== '') srcEl.innerHTML = '';
@@ -1617,7 +1615,7 @@
       host.style.display = 'none';
       return;
     }
-    const wrapped = _wrapTargetText(cleanTarget);
+    const wrapped = _wrapTargetText(targetText);
     // 用 innerHTML + <br> 寫入(比 textContent + \n + white-space:pre-wrap 更穩定,
     // 不受 inline-block 的 wrap 行為差異影響)。先 escape HTML 字元防注入。
     const html = _escapeHtml(wrapped).replace(/\n/g, '<br>');

@@ -60,7 +60,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
         # ── REST API 端點 ────────────────────────────────────
 
         # 0. GET /health or /api/health：健康檢查端點
-        if (path == "/health" or path == "/api/health") and method == "GET":
+        if path in ("/health", "/api/health") and method == "GET":
             llm_alive = state.llm_proc and state.llm_proc.poll() is None
             payload = {
                 "status": "ok",
