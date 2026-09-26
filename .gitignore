@@ -102,3 +102,7 @@ Models/
 *.safetensors
 watchdog/LLMMenuBar
 LLMMenuBar
+
+# Scripts 評測暫存與測試產物
+scripts/output/
+scripts/test_data/

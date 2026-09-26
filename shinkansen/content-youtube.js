@@ -301,6 +301,10 @@
     // 詳見 _scheduleMwebCcRetry 註解)
     _mwebCcRetryTimer:        null,
     _mwebCcRetries:           0,
+    // 全軌預先平滑化與背景串流翻譯 Worker
+    bgQueue:                  [],
+    bgWorkerRunning:          false,
+    bgWorkerAbort:            null,
   };
 
   // ─── 工具 ──────────────────────────────────────────────────
@@ -504,6 +508,12 @@
     YT.translatedUpToMs   = 0;
     YT.captionMapCoverageUpToMs = 0;
     YT.asrSegConsumed     = new Set();  // v2.0.54: 換軌後片段時間軸全新,取用紀錄一併歸零
+    if (YT.bgWorkerAbort) {
+      YT.bgWorkerAbort.aborted = true;
+      YT.bgWorkerAbort = null;
+    }
+    YT.bgQueue = [];
+    YT.bgWorkerRunning = false;
     SK.sendLog('info', 'youtube', `caption source bookkeeping reset (${reason})`, {
       gen: YT.captionSourceGen, ...(extra || {}),
     });
@@ -596,6 +606,7 @@
       const windowStartMs = Math.floor(currentMs / windowSizeMs) * windowSizeMs;
       _debugUpdate(`XHR 攔截 ${segments.length} 條字幕（至 ${Math.round(lastMs / 1000)}s），開始翻譯`);
       if (_shouldShowTranslatingStatus()) showCaptionStatus(SK.t('yt.status.translating'));
+      _startBackgroundTranslationWorker();
       translateWindowFrom(windowStartMs);
     }
   });
@@ -1068,6 +1079,44 @@
   const _ASR_SENTENCE_MIN_WORD = 20;    // 合句總條數上限(吞併用)
   const _ASR_MAX_WORDS = 30;            // Ile 合併後 word 上限
 
+  // 英文懸掛連詞、介系詞、代名詞、從屬子句/舉例引導詞正規式 (用於偵測破碎斷句並移轉至下一句)
+  const _DANGLING_PATTERN = new RegExp(
+    '\\s+(' +
+    // 1. 類比 / 舉例 / 從屬子句引導短語 (e.g. "like when he decided to", "such as when they tried to")
+    '(?:just\\s+)?(?:like|such\\s+as)\\s+(?:when|if|how|where|what)(?:\\s+(?:he|she|they|we|i|you|it)(?:\\s+(?:decided|wanted|tried|chose|started|had|went|did|was|were|thought|said|felt|seemed|hoped))?(?:\\s+to)?)?|' +
+    '(?:just\\s+)?(?:like|such\\s+as)(?:\\s+(?:he|she|they|we|i|you|it)(?:\\s+(?:decided|wanted|tried|chose|started|had|went|did|was|were))?(?:\\s+to)?)?|' +
+    '(?:when|if|because|although|while|since)\\s+(?:he|she|they|we|i|you|it)(?:\\s+(?:decided|wanted|tried|chose|started|had|went|did|was|were))?(?:\\s+to)?|' +
+    // 2. 複合連詞與介系詞片語
+    'but\\s+when|but\\s+as|and\\s+as|and\\s+this|and\\s+that|so\\s+that|and\\s+then|but\\s+then|' +
+    'in\\s+the|to\\s+the|of\\s+the|on\\s+the|at\\s+the|for\\s+the|with\\s+the|from\\s+the|about\\s+the|into\\s+the|' +
+    'with\\s+a|with\\s+an|in\\s+a|to\\s+a|of\\s+a|for\\s+a|from\\s+a|' +
+    'but\\s+the|and\\s+the|or\\s+the|so\\s+the|' +
+    // 3. 單字懸掛連詞 / 介系詞 / 冠詞 / 代名詞 / 助動詞
+    'but|and|or|so|when|as|because|if|although|while|since|' +
+    'that|which|where|who|whom|whose|' +
+    'with|for|to|in|on|at|of|from|about|into|like|than|' +
+    'the|a|an|this|these|those|any|some|every|my|your|our|their|his|her|' +
+    'i|we|they|he|she|it|you|' +
+    'is|are|was|were|be|been|being|has|have|had' +
+    ')$', 'i'
+  );
+
+  // 語意邊界平滑化：檢查前後句銜接，若前句句末有從屬句引導詞或懸掛連詞，順移至後句句首
+  function _harmonizeSentenceBoundaries(sentences) {
+    if (!sentences || sentences.length < 2) return sentences;
+    for (let i = 0; i < sentences.length - 1; i++) {
+      const cur = sentences[i];
+      const next = sentences[i + 1];
+      const m = cur.text.match(_DANGLING_PATTERN);
+      if (m) {
+        const dangle = m[1];
+        cur.text = cur.text.slice(0, m.index).trim();
+        next.text = `${dangle} ${next.text}`.trim();
+      }
+    }
+    return sentences.filter(s => s.text.length > 0);
+  }
+
   // 計算 ASR 文本長度單位（西文計 word，CJK 計字符數）
   function _countAsrUnits(text, lang) {
     if (!text) return 0;
@@ -1188,7 +1237,7 @@
     const merged   = Ile(split);
     const compact  = Lle(merged);
 
-    return compact.map((group, idx) => {
+    const sentences = compact.map((group, idx) => {
       // 片段是 parseJson3 trim 過的整行，行與行之間必須補空白再合句（原 join('') 讓跨行單字
       // 黏在一起送 LLM,real-data:「a little bit moretime?」)
       const text = joinSegTexts(group.map(e => e.utf8), lang).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1202,6 +1251,8 @@
         sourceSegs: group.map(e => e._src),
       };
     }).filter(s => s.text.length > 0);
+
+    return _harmonizeSentenceBoundaries(sentences);
   }
 
   // 暴露給 spec 端用(只對自家 spec 開放,不影響 production behaviour)
@@ -3125,6 +3176,141 @@
   //          不必繞 translateYouTubeSubtitles 才能測 leadMs > 0 的批次大小分流。
   SK.translateWindowFrom = (windowStartMs) => translateWindowFrom(windowStartMs);
 
+  // ─── 全軌預先平滑化與背景串流翻譯 Worker ───────────────────────
+  // 當攔截到完整 rawSegments (ASR 或人工字幕) 時，不再只等待 30 秒視窗驅動，
+  // 而是將全軌預先平滑化為完整語意句子佇列，以 batch-size: 1 (50ms 間隔) 啟動背景佇列翻譯，
+  // 翻譯完成即寫入 captionMap 與 displayCues。使用者播放時實現 0 延遲命中與天然語意斷句。
+  async function _startBackgroundTranslationWorker() {
+    const YT = SK.YT;
+    if (YT.bgWorkerRunning || !YT.active || !YT.rawSegments?.length) return;
+    if (_shouldSkipBecauseAlreadyTraditionalChinese()) return;
+
+    YT.bgWorkerRunning = true;
+    const currentAbort = { aborted: false };
+    YT.bgWorkerAbort = currentAbort;
+    const myGen = YT.captionSourceGen || 0;
+
+    SK.sendLog('info', 'youtube', 'starting background translation worker', {
+      totalSegments: YT.rawSegments.length,
+      isAsr: YT.isAsr,
+      gen: myGen,
+    });
+
+    try {
+      const config = YT.config || await getYtConfig();
+      // 全軌預處理平滑化佇列
+      if (!YT.bgQueue || YT.bgQueue.length === 0) {
+        if (YT.isAsr) {
+          const fullSentences = _heuristicMergeAsr(YT.rawSegments, YT.captionLang);
+          YT.bgQueue = fullSentences.map(s => ({
+            text: s.text,
+            keys: s.sourceSegs?.length ? s.sourceSegs.map(seg => seg.normText) : [normText(s.text)],
+            _cue: {
+              startMs: s.startMs,
+              endMs: s.endMs,
+              sourceText: s.text,
+              segStarts: s.sourceSegs?.map(seg => seg.startMs) || [s.startMs],
+            },
+          }));
+        } else {
+          const units = buildTranslationUnits(YT.rawSegments, true);
+          YT.bgQueue = units.map(u => ({
+            text: u.text,
+            keys: u.keys || [normText(u.text)],
+            _cue: u._cue || null,
+          }));
+        }
+      }
+
+      const HANGING_ZH = [
+        '就像當他決定', '就像當他', '像當他決定', '像當他', '例如當他決定', '比如當他決定',
+        '就像是當', '就像是', '就像當', '就像', '比如', '例如', '如同',
+        '但當', '但是', '然而', '而且', '並且', '因為', '如果', '當', '所以', '以及', '不過',
+        '但我仍', '但我', '但', '而', '且', '這', '那', '在', '我們', '我', '你', '他們'
+      ];
+      let pendingZhPrefix = '';
+
+      while (YT.active && !currentAbort.aborted && myGen === (YT.captionSourceGen || 0)) {
+        if (!YT.bgQueue || YT.bgQueue.length === 0) break;
+
+        // 優先度調整 (Seek Priority / Current playback priority)
+        const video = YT.videoEl || document.querySelector('video');
+        const curMs = video ? Math.floor(video.currentTime * 1000) : 0;
+        let targetIdx = 0;
+
+        // 尋找當前播放時間附近且尚未在 captionMap 的句子
+        const urgentIdx = YT.bgQueue.findIndex(u =>
+          u._cue && curMs >= (u._cue.startMs - 3000) && curMs <= (u._cue.endMs + 8000) &&
+          !YT.captionMap.has(u.keys[0])
+        );
+        if (urgentIdx > 0) {
+          targetIdx = urgentIdx;
+        }
+
+        const unit = YT.bgQueue.splice(targetIdx, 1)[0];
+        if (!unit) continue;
+
+        // 若已翻過則略過
+        if (YT.captionMap.has(unit.keys[0])) continue;
+
+        const msgType = SK.getSubtitleBatchType(config.engine, false);
+
+        try {
+          const res = await SK.safeSendMessage({
+            type: msgType,
+            payload: { texts: [unit.text], glossary: null },
+          });
+
+          if (currentAbort.aborted || !YT.active || myGen !== (YT.captionSourceGen || 0)) break;
+
+          if (res?.ok && res.result?.[0]) {
+            let trans = SK.sanitizeMarkers(String(res.result[0]).trim());
+            // 標點符號清洗 (零標點規則)
+            trans = trans.replace(/[,.!?;:'"`~@#$%^&*()_+=<>{}\[\]|\\，。！？：；、…“”‘’""''「」『』（）《》【】—～·]/g, ' ')
+                         .replace(/\s+/g, ' ').trim();
+
+            if (pendingZhPrefix) {
+              trans = `${pendingZhPrefix} ${trans}`.trim();
+              pendingZhPrefix = '';
+            }
+
+            // 中文結尾懸掛詞後處理
+            for (const conj of HANGING_ZH) {
+              if (trans.endsWith(conj)) {
+                trans = trans.slice(0, -conj.length).trim();
+                pendingZhPrefix = conj;
+                break;
+              }
+            }
+
+            // 寫入 captionMap
+            YT.captionMap.set(unit.keys[0], trans);
+            for (let k = 1; k < unit.keys.length; k++) {
+              if (unit.keys[k] !== unit.keys[0]) YT.captionMap.set(unit.keys[k], '');
+            }
+
+            // 寫入 displayCues
+            if (unit._cue) {
+              for (const piece of _splitLongAsrCue(unit._cue.startMs, unit._cue.endMs, trans, unit._cue.segStarts)) {
+                _upsertDisplayCue(piece.startMs, piece.endMs, unit._cue.sourceText, piece.text);
+              }
+            }
+
+            _updateOverlay();
+          }
+        } catch (err) {
+          SK.sendLog('warn', 'youtube', 'bg worker unit translation error', { error: err.message, text: unit.text });
+        }
+
+        // 微延遲 50ms (對齊使用者要求，避免本機 LLM / GPU 佇列塞車)
+        await new Promise(r => setTimeout(r, 50));
+      }
+    } finally {
+      YT.bgWorkerRunning = false;
+      SK.sendLog('info', 'youtube', 'background translation worker loop finished', { gen: myGen });
+    }
+  }
+
   async function translateWindowFrom(windowStartMs) {
     const YT = SK.YT;
     if (YT.translatingWindows.has(windowStartMs)) return;  // v1.2.54: per-window 防重入
@@ -3196,6 +3382,15 @@
         );
     // 收集後立即標記取用(同步,搶在其他並行視窗收集之前),失敗時於收尾釋放
     if (_myConsumedSet) windowSegs.forEach(s => _myConsumedSet.add(s.startMs));
+
+    // 全軌背景 Worker 預翻快取命中檢查：若本視窗字幕皆已翻譯，直接視為完成
+    const allCached = windowSegs.length > 0 && windowSegs.every(s => YT.captionMap.has(s.normText));
+    if (allCached) {
+      _okBatchCount = 1;
+      YT.translatedWindows.add(windowStartMs);
+      _updateOverlay();
+      return;
+    }
 
     SK.sendLog('info', 'youtube', 'translateWindow start', {
       windowStartMs, windowEndMs, segCount: windowSegs.length,
@@ -4253,6 +4448,12 @@
     YT.captionSourceId    = null;       // v1.10.46: 來源身份隨 session 結束失效
     YT.displayCues        = [];         // G 路徑:清 overlay 顯示單位
     YT.asrSegConsumed     = new Set();  // v2.0.54: captionMap 已清,取用紀錄留著會讓重啟後片段永遠不再送翻
+    if (YT.bgWorkerAbort) {
+      YT.bgWorkerAbort.aborted = true;
+      YT.bgWorkerAbort = null;
+    }
+    YT.bgQueue            = [];
+    YT.bgWorkerRunning    = false;
     YT.ccPaused           = false;
     if (YT._ccButtonObserver) {
       YT._ccButtonObserver.disconnect();
@@ -4404,6 +4605,7 @@
       const currentMs = video ? Math.floor(video.currentTime * 1000) : 0;
       const windowSizeMs = (config.windowSizeS || 30) * 1000;
       const windowStartMs = Math.floor(currentMs / windowSizeMs) * windowSizeMs;
+      _startBackgroundTranslationWorker();
       await translateWindowFrom(windowStartMs);
       // hideCaptionStatus 由第一條中文字幕出現時觸發（replaceSegmentEl 內呼叫）
     } else {
