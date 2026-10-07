@@ -159,10 +159,60 @@
   };
 
   /**
+   * 序列化端「透明」的元素：serializeNodeIterableOnce 對它不產生 slot、直接往子節點走
+   *（非 CODE / BUTTON / BR / PRE>code / HARD_EXCLUDE / atomic / 可保留 inline / 媒體）。
+   * 譯文 fragment 裡不會有這層元素——clean-slate 寫在它的父層，這層就從 DOM 消失。
+   */
+  function isSerializeTransparent(child) {
+    const tag = child.tagName;
+    if (tag === 'CODE' || tag === 'BUTTON' || tag === 'BR') return false;
+    if (SK.HARD_EXCLUDE_TAGS.has(tag)) return false;
+    if (tag === 'PRE' && child.querySelector('code')) return false;
+    if (SK.isMediaLikeElement(child)) return false;
+    if (SK.isAtomicPreserve(child) || SK.isPreservableInline(child)) return false;
+    return true;
+  }
+
+  /**
+   * 唯一包裝層下探：target 的直屬內容只有「一個透明元素子 + 空白文字」時，譯文改寫進那個
+   * 子元素（可連續下探）。典型結構：`<a class="link"><div class="link-text">…文字…</div></a>`
+   *（目錄 / 選單項目：間距、截斷、對齊樣式掛在內層 wrapper 上）。寫在外層的話 clean-slate
+   * 會把 wrapper 連同它的 padding / line-height 一起清掉，譯文項目和沒被翻的兄弟項目行距
+   * 不一致、對不齊旁邊的圖示。wrapper 對序列化透明，下探後寫入的內容與序列化範圍完全相同
+   *（外層除了這個 wrapper 沒有其他內容），不會多寫也不會漏寫。
+   */
+  function descendSoleTransparentWrapper(target) {
+    let cur = target;
+    for (let depth = 0; depth < 8; depth++) {
+      let only = null;
+      let blocked = false;
+      for (const n of cur.childNodes) {
+        if (n.nodeType === Node.ELEMENT_NODE) {
+          if (only) { blocked = true; break; }
+          only = n;
+        } else if (n.nodeType === Node.TEXT_NODE && n.nodeValue && n.nodeValue.trim()) {
+          blocked = true; break;
+        }
+      }
+      if (blocked || !only) break;
+      if (!isSerializeTransparent(only)) break;
+      if (!(only.textContent || '').trim()) break;
+      cur = only;
+    }
+    return cur;
+  }
+
+  /**
    * 「注入目標解析」——回答「要把譯文寫到哪個元素？」
-   * 預設值是 el 本身。唯一例外：el 自己 computed font-size 趨近 0（MJML 模板）。
+   * 預設值是 el 本身。例外：
+   *   1. el 自己 computed font-size 趨近 0（MJML 模板）→ 找第一個字級正常的後代
+   *   2. el 的內容只有一個透明包裝層 → 下探寫進包裝層（descendSoleTransparentWrapper）
    */
   function resolveWriteTarget(el) {
+    return descendSoleTransparentWrapper(resolveFontSizeTarget(el));
+  }
+
+  function resolveFontSizeTarget(el) {
     const win = el.ownerDocument?.defaultView;
     const cs = win?.getComputedStyle?.(el);
     const px = cs ? parseFloat(cs.fontSize) : NaN;
@@ -659,6 +709,17 @@
         if (anc.hasAttribute && anc.hasAttribute('data-shinkansen-nodevalue-mutated')) return;
         anc = anc.parentElement;
       }
+    }
+
+    // 混合模式守門（懸停翻譯 dual + 整頁 single，2026-09-30 issue #67）：元素自己 / 祖先已是
+    // dual 原文槽（data-shinkansen-dual-source）= 這段已有譯文 wrapper；detect 層刻意不擋
+    // dual-source（SPA 重抓場景），單語路徑若再原地覆蓋會變成「原地中文 + 下方 wrapper 中文」
+    // 雙重譯文。元素 unit 內含 dual 原文槽（父段落包住懸停翻過的子段）同理——innerHTML 覆蓋
+    // 會連 wrapper 一起吃掉。dual 路徑由 injectDual 內部去重，不在此擋。fragment unit 只動
+    // 自己的節點區段，容器內別處有 dual 槽不受影響，只看祖先。
+    if (STATE.translatedMode !== 'dual' && unit.el && unit.el.nodeType === 1) {
+      if (unit.el.closest && unit.el.closest('[data-shinkansen-dual-source]')) return;
+      if (unit.kind !== 'fragment' && unit.el.querySelector && unit.el.querySelector('[data-shinkansen-dual-source]')) return;
     }
 
     // v1.5.0: 雙語對照模式分派——dual 走 SK.injectDual 走另一條路徑。

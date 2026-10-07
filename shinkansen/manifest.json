@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Shinkansen Custom",
-  "version": "2.5.0",
+  "version": "2.5.7",
   "description": "__MSG_extDescription__",
   "default_locale": "zh_TW",
   "browser_specific_settings": {
@@ -87,6 +87,7 @@
         "content-touch.js",
         "content.js",
         "content-shortcuts.js",
+        "content-hover.js",
         "content-floating-icon.js",
         "custom/yt-player-btn.js"
       ],
@@ -155,5 +156,6 @@
       "description": "__MSG_cmdSendInstapaper__"
     }
   },
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApiLpBCmpyptq8EHKcPw9UsRmLsjaFmGS/AV/moSuCevP1J76ApI7HUB4rcJ3xpp3MH1boT2DI9efXKFly4UY5dTH6ezna8w2H8DdqrJ5Qjyrb+ijtBGiIE25jx2CxRHRiExgg4gs9CBqGAO0Dqx8D+ilaFL002+eCue106datkRwcEFvaRlglE89NtAqZifG/eWcD0KRPUixgKk0QV2fc/qDEkf38Ec2p5m3dCpcLdHn/vjMrIWLBSom71g7icpzZbvOk2JKnh8Bo8XDGZII6TgQBCrd2s282glsFgnWlP85d9xXickRyOGhSGkUaTgK9tUrQ1tYqMZvqUU9+idyDwIDAQAB"
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApiLpBCmpyptq8EHKcPw9UsRmLsjaFmGS/AV/moSuCevP1J76ApI7HUB4rcJ3xpp3MH1boT2DI9efXKFly4UY5dTH6ezna8w2H8DdqrJ5Qjyrb+ijtBGiIE25jx2CxRHRiExgg4gs9CBqGAO0Dqx8D+ilaFL002+eCue106datkRwcEFvaRlglE89NtAqZifG/eWcD0KRPUixgKk0QV2fc/qDEkf38Ec2p5m3dCpcLdHn/vjMrIWLBSom71g7icpzZbvOk2JKnh8Bo8XDGZII6TgQBCrd2s282glsFgnWlP85d9xXickRyOGhSGkUaTgK9tUrQ1tYqMZvqUU9+idyDwIDAQAB",
+  "version_name": "2.5.7-custom.20261007-subtitle-fix"
 }

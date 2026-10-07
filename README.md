@@ -85,3 +85,13 @@ shinkansen-custom/
 ## 📄 授權條款
 
 本專案遵循 [LICENSE](LICENSE) 條款開源發布。詳細架構升級歷史請參閱 [0911-UPDATE-NOTES.md](0911-UPDATE-NOTES.md)。
+
+## YouTube 英文自動字幕與 Jev 斷句
+
+在擴充功能設定的 YouTube 分頁，勾選「優先選擇英文自動字幕」後儲存並重新整理影片。影片有 `en`／`en-*` 的 ASR 字幕時會優先選取，即使同時有人工英文或中文字幕；没有英文 ASR 時沿用既有選軌邏輯。此選項不會將其他語言的字幕透過 YouTube 自動翻譯成英文。
+
+勾選「開啟 Jev 智慧斷句與字幕過濾」並填入 TypeSafe AI API Key，才會使用 Jev 的前後文語意判斷。高信心邊界套用到本地合句，也提供給 Gemini／自訂 Provider 的 AI 分句作為提示。低信心、未填 Key 或 API 失敗時使用本地規則；日誌的 `jev boundary evaluation`／`jev sentence boundaries` 會記錄實際來源、判定數量或失敗原因。每個視窗最多評估 128 個邊界，分成最多四次請求並行，每次上限 1.5 秒；其餘邊界沿用本地規則。既有字幕過濾最多評估每批前 32 條，其他條目使用保守的本地判斷。
+
+依照 [TypeSafe HTTP API](https://docs.typesafe.ai/api)，Jev 呼叫使用 `model`、`state`、`questions`，從 `answers` 讀取 Noul 機率。先前的 `items`／`decisions` 格式已移除。回歸測試使用模擬 API，不代表實際影片品質或服務延遲已經驗證。
+
+測試：`node --test tests/subtitle-jev.test.mjs`。

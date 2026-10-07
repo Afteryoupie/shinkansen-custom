@@ -3,6 +3,7 @@
 
 import { browser } from './lib/compat.js';
 import { JevDecisionEngine } from './lib/jev.js';
+import { isLocalSubtitleProvider, queueLocalSubtitle, localSubtitlePrompt } from './lib/local-subtitle.js';
 import { IS_IOS_BUILD } from './lib/distribution.js'; // Phase 2: host app 設定橋接只在 iOS build 走 native messaging
 import { translateBatch, extractGlossary, extractTermRenderings, translateBatchStream, summarizeArticle } from './lib/gemini.js';
 import { translateBatch as translateBatchCustom, extractGlossary as extractGlossaryCustom } from './lib/openai-compat.js'; // v1.5.7
@@ -307,12 +308,14 @@ function buildFixedGlossaryEntries(fixedGlossary, sender) {
   let domainEntries = [];
   if (fixedGlossary.byDomain && sender?.tab?.url) {
     try {
-      const hostname = new URL(sender.tab.url).hostname;
+      const pageUrl = new URL(sender.tab.url);
       // byDomain key 是使用者輸入的任意形式（可能含 https:// / www. / 尾斜線），
       // 不可對 hostname 做 exact match（`medium.com` 永遠比不中 `www.medium.com`，
       // 使用者被迫全搬全域）。比對統一走 lib/domain-utils.js 的白名單同款規則
-      //（正規化 + www. 互通 + `*.` 萬用字元），多 key 命中時依排序後合併。
-      const keys = globalThis.__SKDomain.matchingDomainKeys(hostname, fixedGlossary.byDomain);
+      //（正規化 + www. 互通 + `*.` 萬用字元）；key 帶路徑前綴（`host/path`）時只對
+      // 該路徑之下的頁面生效（同站不同作品 / 專欄各用一份術語表）。多 key 命中時
+      // 依「整站 → 路徑」具體度排序後合併，後者覆蓋前者。
+      const keys = globalThis.__SKDomain.matchingDomainKeys(pageUrl.hostname, fixedGlossary.byDomain, pageUrl.pathname);
       for (const key of keys) {
         const entries = Array.isArray(fixedGlossary.byDomain[key])
           ? fixedGlossary.byDomain[key].filter((e) => e.source && e.target)
@@ -653,7 +656,8 @@ async function applyJevSubtitleFilter(payload, settings, doTranslateFn) {
   });
 
   const texts = payload.texts;
-  const verdicts = await jev.evaluateBatch(texts, settings.targetLanguage);
+  const evaluated = await jev.evaluateBatch(texts, settings.targetLanguage);
+  const verdicts = texts.map((text, i) => evaluated?.[i] || jev.fallbackEvaluate(text, settings.targetLanguage));
 
   const needsTransIndices = [];
   const toTranslateTexts = [];
@@ -691,7 +695,8 @@ async function applyJevSubtitleFilter(payload, settings, doTranslateFn) {
     translationUsage = subRes.usage;
     const translatedSub = subRes.result || [];
     for (let j = 0; j < needsTransIndices.length; j++) {
-      finalResults[needsTransIndices[j]] = translatedSub[j] || toTranslateTexts[j];
+      finalResults[needsTransIndices[j]] = translatedSub.length === toTranslateTexts.length
+        ? (translatedSub[j] ?? null) : null;
     }
   }
 
@@ -700,6 +705,8 @@ async function applyJevSubtitleFilter(payload, settings, doTranslateFn) {
     result: finalResults,
     usage: translationUsage,
     jevFiltered: true,
+    // 明確空白（音效）與模型漏回必須區分，content 端才能正確補翻。
+    intentionalEmpty: verdicts.flatMap((v, i) => v && !v.is_valid ? [i] : []),
   };
 }
 
@@ -1056,12 +1063,17 @@ const messageHandlers = {
       // handleTranslateCustom 看到 override 就不再包 getEffective → targetLanguage = en / ja
       // 的使用者用自訂 Provider 翻人工字幕全部變繁中。改跟 Gemini 字幕路徑（711 / 771）與
       // ASR 自訂路徑對齊：依 target 選 UNIVERSAL / zh-TW 版，使用者客製 prompt 照常優先。
-      const overrides = { systemPrompt: getEffectiveSubtitleSystemPrompt(s.targetLanguage, yt.systemPrompt) };
+      const local = isLocalSubtitleProvider(s.customProvider);
+      const isDefaultPrompt = !customPromptForKey(yt.systemPrompt, getEffectiveSubtitleSystemPrompt);
+      const overrides = { systemPrompt: local && isDefaultPrompt
+        ? localSubtitlePrompt(s.targetLanguage)
+        : getEffectiveSubtitleSystemPrompt(s.targetLanguage, yt.systemPrompt) };
       // v1.5.8: 字幕路徑同 Gemini 字幕路徑，預設不套用固定術語表 / 黑名單
-      return applyJevSubtitleFilter(payload, s, (p) => handleTranslateCustom(p, sender, '_oc_yt', overrides,
-        yt.applyFixedGlossary === true,
-        yt.applyForbiddenTerms === true,
-        { customPrompt: customPromptForKey(yt.systemPrompt, getEffectiveSubtitleSystemPrompt) }));
+      return queueLocalSubtitle(s.customProvider, () => applyJevSubtitleFilter(payload, s, (p) =>
+        handleTranslateCustom(local ? { ...p, docBatchSize: 1 } : p, sender, '_oc_yt', overrides,
+          yt.applyFixedGlossary === true,
+          yt.applyForbiddenTerms === true,
+          { customPrompt: local ? overrides.systemPrompt : customPromptForKey(yt.systemPrompt, getEffectiveSubtitleSystemPrompt) })));
     },
   },
   // YouTube ASR 自動字幕走自訂 Provider 時的入口。沿用 customProvider 的
@@ -1080,8 +1092,8 @@ const messageHandlers = {
         systemPrompt: getEffectiveAsrSubtitleSystemPrompt(s.targetLanguage, payload?.sourceLanguage || 'en'),
         temperature: yt.temperature ?? 0.1,
       };
-      return handleTranslateCustom(payload, sender, '_oc_yt_asr', overrides, false, false,
-        { temperatureDefault: DEFAULT_SETTINGS.ytSubtitle.temperature });
+      return queueLocalSubtitle(s.customProvider, () => handleTranslateCustom(payload, sender, '_oc_yt_asr', overrides, false, false,
+        { temperatureDefault: DEFAULT_SETTINGS.ytSubtitle.temperature }));
     },
   },
   // Drive 影片 ASR 字幕走自訂 Provider 時的入口。跟 TRANSLATE_ASR_SUBTITLE_BATCH_CUSTOM
@@ -1935,7 +1947,18 @@ async function testGeminiKey(payload) {
   try {
     const resp = await fetchWithTimeout(url, { method: 'GET', headers: { 'x-goog-api-key': apiKey } }, 10000);
     if (resp.ok) {
-      const j = await resp.json().catch(() => ({}));
+      // 2xx 但 body 不是 JSON（公司 proxy / 登入頁 / captive portal 攔截後回 200 + HTML）不算連線成功，
+      // 否則測試綠燈、正式翻譯才炸。與 testCustomProvider 同 pattern（PR #70 修自訂 Provider，此處同步）
+      let j;
+      try {
+        j = await resp.json();
+      } catch {
+        return {
+          ok: false,
+          status: resp.status,
+          message: `HTTP ${resp.status}，但回應不是有效的 JSON。可能是網路環境（公司 proxy / 登入頁）攔截了請求，請換網路再試。`,
+        };
+      }
       return { ok: true, status: resp.status, message: `連線成功（model: ${j?.name || model}）` };
     }
     let errMsg = `HTTP ${resp.status}`;
@@ -1986,7 +2009,16 @@ async function testCustomProvider(payload) {
       body: JSON.stringify(reqBody),
     }, timeoutMs);
     if (resp.ok) {
-      const j = await resp.json().catch(() => ({}));
+      let j;
+      try {
+        j = await resp.json();
+      } catch {
+        return {
+          ok: false,
+          status: resp.status,
+          message: `HTTP ${resp.status}，但 Provider 回應不是有效的 JSON。請確認 Base URL 是否為正確的 OpenAI-compatible API endpoint。`,
+        };
+      }
       const used = j?.usage?.total_tokens || j?.usage?.prompt_tokens || 0;
       const modelLabel = model || j?.model || 'server-default';
       return { ok: true, status: resp.status, message: `連線成功（${modelLabel}，本次用量約 ${used} tokens）` };

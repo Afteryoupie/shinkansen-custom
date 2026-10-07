@@ -163,6 +163,10 @@ if (window.__shinkansen_loaded) {
     // 設為 targetLanguage 讓瀏覽器選對 CJK 字形變體(避免 zh-TW 頁面下日文譯文用到
     // 中文字形變體 → 視覺不協調),restorePage / abort 路徑用這份還原回原 lang。
     originalLang: new Map(), // el → string | null
+    // 懸停翻譯（content-hover.js）曾成功翻過至少一段。整頁未翻（translated=false）但 DOM 有
+    // 注入痕跡時，handleTranslatePreset 靠它判「按快速鍵 = 翻剩下的段落」而非 toggle 還原。
+    // restoreInjectedDom（還原 / 取消）與 SPA reset 歸零。
+    hoverTranslated: false,
     // 注入前 element 的 inline style.fontFamily 原值(空字串 = 原本沒設 inline)。
     // 譯文注入時若 target 是 CJK locale,會把 LOCALE_FONT_PREPEND 對應字體 stack
     // prepend 到 inline fontFamily,確保站點 hardcode 單一 locale 字體
@@ -287,13 +291,8 @@ if (window.__shinkansen_loaded) {
   SK.ASR_CUE_MAX_CHARS = 40;
   // 拆分後每片最短顯示時長;cue 時長不夠拆 N 片時自動減片數,避免字幕閃跳
   SK.ASR_CUE_MIN_PIECE_MS = 1200;
-  // 2026-09-11（dev tail 2.4.13.4）：ASR 顯示 cue 統一提前量。cue 起點在 parseJson3
-  // perLineTiming 修正後已對齊真實語音起點（real-data 平均早 0.1s），但譯文字幕慣例是
-  // 略早於語音出現（讀者要先讀完整句譯文），修正前兩行合一 event 的第二行句子系統性
-  // 提早 1.3–2.6s 出現、平均早 1s，使用者習慣了那個節奏，對齊後反而感覺「落後 1–2 秒」。
-  // 改為所有 cue 統一提前 1s：_findActiveCue 以 currentTime + 此值查表，iOS 原生字幕軌
-  // 的 VTTCue 時間軸整體前移同值，兩條顯示路徑一致。
-  SK.ASR_CUE_LEAD_MS = 1000;
+  // 使用來源字幕時間。固定提前一秒會在短句或停頓時顯示下一句。
+  SK.ASR_CUE_LEAD_MS = 0;
   if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     const markInteraction = () => { SK._lastInteractionT = Date.now(); };
     // capture phase + passive: 確保最早 fire,不阻塞網頁 listener。
@@ -581,16 +580,21 @@ if (window.__shinkansen_loaded) {
   // 切分後反而能塞回正常批次平行吞吐。
   SK.BR_BLOCK_SPLIT_CHARS = 3500;
 
-  // 2026-09-14：頁面只被背景簡繁本地轉換標成已翻譯時，使用者按翻譯要「翻外語內容」還是
-  // 「還原轉換」的判準——未翻候選段落的原文總字元數達此門檻即視為有外語內容要翻
-  // （約一個正文段落；避免整頁簡體頁上零星的英文按鈕 / 標籤把 toggle 還原變成整頁送翻）。
-  SK.CONVERTED_PAGE_RETRANSLATE_MIN_CHARS = 200;
-  SK.hasSubstantialUntranslated = function hasSubstantialUntranslated() {
+  // 頁面只有「部分段落」帶注入痕跡（懸停翻譯過幾段 / 背景簡繁本地轉換）時，使用者按翻譯要
+  // 「翻剩下的內容」還是「還原」的判準——未翻候選段落的原文總字元數達 minChars 即視為還有內容要翻。
+  //   - 懸停翻譯：預設門檻 HOVER_PAGE_RETRANSLATE_MIN_CHARS（約一個正文段落；避免整頁幾乎都被
+  //     懸停翻完後，零星的按鈕 / 標籤把 toggle 還原變成整頁送翻）
+  //   - 簡繁自動轉換：呼叫端傳 1（有任何未翻候選就直接翻）——自動轉換是背景行為，使用者按
+  //     翻譯的意圖一律是「翻譯」，不該第一下變成還原轉換
+  SK.HOVER_PAGE_RETRANSLATE_MIN_CHARS = 200;
+  SK.hasSubstantialUntranslated = function hasSubstantialUntranslated(minChars = SK.HOVER_PAGE_RETRANSLATE_MIN_CHARS) {
     const units = SK.collectParagraphs();
     let chars = 0;
     for (const u of units) {
+      // dual 原文槽（懸停 dual 翻過的段落）偵測層不擋，但它已有譯文，不算未翻
+      if (u.el?.closest?.('[data-shinkansen-dual-source]')) continue;
       chars += ((u.el?.innerText || u.text || '') + '').trim().length;
-      if (chars >= SK.CONVERTED_PAGE_RETRANSLATE_MIN_CHARS) return true;
+      if (chars >= minChars) return true;
     }
     return false;
   };

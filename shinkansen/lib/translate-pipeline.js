@@ -67,7 +67,9 @@ export function createTranslatePipeline(deps) {
     const cacheKeySuffix = await buildCacheKeySuffix({
       cacheTag, glossary, fixedGlossaryEntries, forbiddenTermsList, ...keyParts,
     });
-    const cached = await cache.getBatch(texts, cacheKeySuffix);
+    const cached = payload?.skipCache === true
+      ? new Array(texts.length).fill(null)
+      : await cache.getBatch(texts, cacheKeySuffix);
     const missingIdxs = [];
     const missingTexts = [];
     cached.forEach((tr, i) => {

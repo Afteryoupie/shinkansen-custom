@@ -5,6 +5,7 @@ initTheme();
 // v1.0.4: 改為 ES module，從 lib/ 匯入共用常數與工具函式，消除重複程式碼。
 
 import { browser } from '../lib/compat.js';
+import { isLocalSubtitleProvider } from '../lib/local-subtitle.js';
 import { DEFAULT_SETTINGS, DEFAULT_SYSTEM_PROMPT, DEFAULT_GLOSSARY_PROMPT, DEFAULT_SUBTITLE_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, isLegacyDefaultForbiddenTerms, TARGET_LANGUAGES, UI_LANGUAGES, getEffectiveSystemPrompt, getEffectiveSubtitleSystemPrompt, getEffectiveGlossaryPrompt, isPromptUnchangedFromDefault, isPromptUnchangedFromAnyTargetDefault, LOCAL_SETTINGS_KEYS, migrateLargeKeysToLocalIfNeeded, overlayLocalSettings, splitSettingsPatch } from '../lib/storage.js';
 import { formatTokens, formatUSD, formatMoney, parseUserNum, buildUsageCsvFilename, formatYmdHms } from '../lib/format.js';
 import { sanitizeImport as sanitizeImportImpl } from './import-sanitize.js';
@@ -167,16 +168,25 @@ async function load() {
   _renderFloatingOpacityLabel(floatingOpacityPct);
   _renderFloatingSizeDemo();
 
-  // 四指觸控手勢：只在 iOS / iPadOS build 顯示（桌面無此手勢，隱藏整個 section）。
-  // 預設關（=== true 才開）；改由懸浮按鈕當主要觸控入口，四指易誤觸發故預設關。
-  $('four-finger-section').hidden = !IS_IOS_BUILD;
+  // 多指觸控手勢 section 的顯示由 CSS 控制（.ios-only + body.runtime-ios-touch，
+  // 只在真觸控裝置顯示；iOS build 跑在 Mac 無觸控 → 不顯示），這裡不設 hidden。
   // iOS 上架提示 pill:iOS build 本身不顯示(使用者已在 iOS 上,提示無意義)。
   // href 依 UI 語系決定 storefront(applyUiLanguageRefresh 於語系切換時同步更新)
   $('ios-promo').hidden = IS_IOS_BUILD;
   if (window.__SK?.i18n?.iosAppStoreUrl) {
     $('ios-promo').href = window.__SK.i18n.iosAppStoreUrl(s.uiLanguage || 'auto');
   }
-  $('fourFingerGesture').checked = s.fourFingerGesture === true;
+  // 懸停翻譯修飾鍵（issue #67）
+  $('hoverTranslateModifier').value = ['off', 'shift', 'alt', 'ctrl'].includes(s.hoverTranslateModifier) ? s.hoverTranslateModifier : 'off';
+  $('hoverTranslateMode').value = s.hoverTranslateMode === 'single' ? 'single' : 'dual';
+  // 單一 picker ← (fourFingerGesture enable, touchGestureFingers 3|4)。關閉時仍記住
+  // 指數（存進 dataset），重新開啟時回到原本的指數而不是硬回 4
+  {
+    const fingers = (s.touchGestureFingers === 3 || s.touchGestureFingers === 4) ? s.touchGestureFingers : 4;
+    const sel = $('touchGestureMode');
+    sel.value = s.fourFingerGesture === true ? String(fingers) : 'off';
+    sel.dataset.fingers = String(fingers);
+  }
 
   // 送到 Instapaper：enable 開關 + 連結狀態（已連結時顯示帳號 + 解除連結）
   $('instapaperEnabled').checked = s.instapaperEnabled === true;
@@ -845,7 +855,12 @@ function updateYtSectionVisibility() {
   // 這裡把 toggle 停用 + 顯示原因,不讓使用者以為勾著就有作用(§UI 語意陷阱)
   const asrToggle = $('ytAsrProgressive');
   const asrGoogleNote = document.getElementById('yt-asr-google-note');
-  if (asrToggle) asrToggle.disabled = (engine === 'google');
+  const local = engine === 'openai-compat' && isLocalSubtitleProvider({
+    baseUrl: $('cp-baseUrl')?.value, model: $('cp-model')?.value,
+  });
+  if (asrToggle) asrToggle.disabled = engine === 'google' || local;
+  const localNote = document.getElementById('yt-asr-local-note');
+  if (localNote) localNote.hidden = !local;
   if (asrGoogleNote) asrGoogleNote.hidden = (engine !== 'google');
 }
 
@@ -1042,8 +1057,15 @@ async function _saveImpl() {
     floatingIcon: $('floatingIcon').checked,
     floatingIconSize: (() => { const v = document.querySelector('input[name="floatingIconSize"]:checked')?.value; return ['16', '24', '32'].includes(v) ? Number(v) : 24; })(),
     floatingIconOpacity: parseUserNum($('floatingIconOpacity').value, (DEFAULTS.floatingIconOpacity ?? 0.7) * 100) / 100,
-    // 四指觸控手勢 enable（iOS only；桌面 checkbox 隱藏但維持 loaded 值，不誤寫）
-    fourFingerGesture: $('fourFingerGesture').checked,
+    // 多指觸控手勢（iOS only；桌面 picker 隱藏但維持 loaded 值，不誤寫）：
+    // picker 'off' → enable=false、指數維持 loaded 值；'3' / '4' → enable=true + 指數
+    fourFingerGesture: $('touchGestureMode').value !== 'off',
+    touchGestureFingers: $('touchGestureMode').value === 'off'
+      ? (parseInt($('touchGestureMode').dataset.fingers, 10) || 4)
+      : parseInt($('touchGestureMode').value, 10),
+    // 懸停翻譯修飾鍵（issue #67）
+    hoverTranslateModifier: $('hoverTranslateModifier').value,
+    hoverTranslateMode: $('hoverTranslateMode').value,
     // v1.5.0: 雙語對照視覺標記
     translationMarkStyle: getSelectedMarkStyle(),
     // v1.8.52: 雙語強調色（已在 setDualAccent 時 sanitize 過,直接寫）
@@ -1947,6 +1969,16 @@ document.body.classList.add(`runtime-${_shortcutsPlatform}`);
 if (IS_IOS_BUILD) {
   document.body.classList.add('runtime-ios');
   if (isTouchScreenDevice()) document.body.classList.add('runtime-ios-touch');
+  // 懸停翻譯需要指標裝置 + hover 能力：iPhone / 純觸控 iPad 沒有，設定列是雜訊；iPad 接
+  // 觸控板 / 滑鼠時 iPadOS 會送真 mousemove 與修飾鍵，可用。用 media query 判「有沒有
+  // hover 能力」而非裝置型號，接上 / 拔掉指標裝置時 change 事件即時更新（桌面 build 永遠顯示）
+  const _hoverMql = window.matchMedia ? window.matchMedia('(hover: hover) and (pointer: fine)') : null;
+  const _syncHoverSection = () => {
+    const sec = document.getElementById('hover-translate-section');
+    if (sec) sec.hidden = !(_hoverMql && _hoverMql.matches);
+  };
+  _syncHoverSection();
+  _hoverMql?.addEventListener?.('change', _syncHoverSection);
 }
 
 // Event delegation:綁 document,anchor 被 data-i18n-html replace 重建後仍有效
@@ -2067,10 +2099,11 @@ $('fixed-domain-select').addEventListener('change', () => {
 
 $('fixed-domain-add-btn').addEventListener('click', () => {
   const input = $('fixed-domain-input');
-  // 使用者常貼完整網址（https:// / 路徑 / 尾斜線），存進 byDomain 前收斂成純主機名
-  //（與自動翻譯白名單同一份正規化規則）。runtime 比對端（background
-  // buildFixedGlossaryEntries）另有 matchingDomainKeys 容錯舊資料的未正規化 key
-  const domain = window.__SKDomain.normalizeDomainEntry(input.value || '');
+  // 使用者常貼完整網址（https:// / 尾斜線 / query），存進 byDomain 前收斂成
+  // `host` 或 `host/path` 標準形（主機名走自動翻譯白名單同一份正規化規則；路徑保留
+  // = 只對該路徑之下的頁面生效）。runtime 比對端（background buildFixedGlossaryEntries）
+  // 另有 matchingDomainKeys 容錯舊資料的未正規化 key
+  const domain = window.__SKDomain.normalizeScopeEntry(input.value || '');
   if (!domain) return;
   if (!fixedGlossary.byDomain[domain]) {
     fixedGlossary.byDomain[domain] = [];
@@ -3093,3 +3126,6 @@ $('log-tbody').addEventListener('click', (e) => {
 // ─── 初始化 ──────────────────────────────────────────────
 initUsageDateRange();
 load();
+
+// 本地端點或模型名稱變更時同步字幕模式說明。
+['cp-baseUrl', 'cp-model'].forEach(id => $(id)?.addEventListener('input', updateYtSectionVisibility));

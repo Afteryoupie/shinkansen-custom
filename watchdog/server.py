@@ -24,12 +24,37 @@ from watchdog.state import state
 from watchdog.manager import scan_models, start_llm, stop_llm, switch_model
 from watchdog.dashboard import render_dashboard
 
+_proxy_tasks = set()
+
+def request_lock():
+    if state.request_lock is None:
+        state.request_lock = asyncio.Lock()
+    return state.request_lock
+
+async def send_model_error(writer, status, message):
+    body = json.dumps({"error": {"message": message}}, ensure_ascii=False).encode("utf-8")
+    writer.write(f"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
+    await writer.drain()
+
+def find_requested_model(requested):
+    return next((m for m in state.models if requested in (m["id"], m.get("name"), m.get("path"))), None)
+
+
 async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
     """處理來自瀏覽器插件、AI 開發工具或 Web 儀表板的請求"""
+    task = asyncio.current_task()
+    _proxy_tasks.add(task)
+    inference_lock = None
     try:
         initial_data = await client_reader.read(4096)
         if not initial_data:
             return
+
+        while b"\r\n\r\n" not in initial_data:
+            chunk = await asyncio.wait_for(client_reader.read(4096), 30)
+            if not chunk:
+                return
+            initial_data += chunk
 
         header_str = initial_data.decode("utf-8", errors="ignore")
         first_line = header_str.split("\r\n")[0] if "\r\n" in header_str else ""
@@ -93,7 +118,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
 
             m = state.current_model
             timeout = m.get("idle_timeout", 0) if m else 0
-            if llm_alive and timeout > 0:
+            if llm_alive and not state.is_starting and timeout > 0:
                 elapsed = time.time() - state.last_active_time
                 rem = max(0, int(timeout - elapsed))
                 if elapsed >= timeout and state.auto_sleep_enabled and state.active_requests == 0:
@@ -107,6 +132,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 "status": status_str,
                 "current_model": m["name"] if m else "",
                 "current_model_id": m["id"] if m else "",
+                "backend_type": m["type"] if m else "",
                 "is_translation": m.get("is_translation", False) if m else False,
                 "idle_timeout": timeout,
                 "idle_remaining": rem,
@@ -146,7 +172,11 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 body = json.dumps({"error": "缺少 model 參數"}).encode("utf-8")
                 resp = f"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode("utf-8") + body
             else:
-                ok, msg = await switch_model(target_model)
+                if request_lock().locked():
+                    await send_model_error(client_writer, "409 Conflict", "模型正被其他請求使用，請稍後重試")
+                    return
+                async with request_lock():
+                    ok, msg = await switch_model(target_model)
                 if is_html_nav:
                     resp = b"HTTP/1.1 303 See Other\r\nLocation: /status\r\nConnection: close\r\n\r\n"
                     client_writer.write(resp)
@@ -160,7 +190,11 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
 
         # 3. POST /api/sleep：立即休眠釋放顯存
         if path == "/api/sleep" and method in ("POST", "GET"):
-            stop_llm()
+            if request_lock().locked():
+                await send_model_error(client_writer, "409 Conflict", "模型正被其他請求使用，請稍後重試")
+                return
+            async with request_lock():
+                stop_llm()
             is_html_nav = method == "GET" and "text/html" in header_str and "application/json" not in header_str
             if is_html_nav:
                 resp = b"HTTP/1.1 303 See Other\r\nLocation: /status\r\nConnection: close\r\n\r\n"
@@ -269,7 +303,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
 
             m = state.current_model
             timeout = m.get("idle_timeout", 0) if m else 0
-            if llm_alive and timeout > 0:
+            if llm_alive and not state.is_starting and timeout > 0:
                 elapsed = time.time() - state.last_active_time
                 rem = max(0, int(timeout - elapsed))
                 if elapsed >= timeout and state.auto_sleep_enabled and state.active_requests == 0:
@@ -283,6 +317,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 "status": status_str,
                 "current_model": m["name"] if m else "",
                 "current_model_id": m["id"] if m else "",
+                "backend_type": m["type"] if m else "",
                 "is_translation": m.get("is_translation", False) if m else False,
                 "idle_timeout": timeout,
                 "idle_remaining": rem,
@@ -315,38 +350,79 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
             return
 
         # ── 9. 一般推論請求（/v1/...）：自動喚醒並轉發 ──
+        if request_lock().locked():
+            await send_model_error(client_writer, "409 Conflict", "模型正被其他請求使用，請稍後重試")
+            return
+
+        # Read the requested model before waking an engine or rewriting its body.
+        header_bytes, sep, body_bytes = initial_data.partition(b"\r\n\r\n")
+        cl_val = None
+        for line in header_bytes.split(b"\r\n"):
+            if line.lower().startswith(b"content-length:"):
+                try:
+                    cl_val = int(line.split(b":", 1)[1].strip())
+                    if cl_val < 0:
+                        raise ValueError()
+                except ValueError:
+                    await send_model_error(client_writer, "400 Bad Request", "Invalid Content-Length")
+                    return
+            if line.lower().startswith(b"transfer-encoding:"):
+                await send_model_error(client_writer, "400 Bad Request", "Use Content-Length for inference requests")
+                return
+        if cl_val is not None and len(body_bytes) < cl_val:
+            body_bytes += await asyncio.wait_for(client_reader.readexactly(cl_val - len(body_bytes)), 30)
+        data_obj = None
+        requested = None
+        if b"application/json" in header_bytes.lower() and body_bytes:
+            try:
+                data_obj = json.loads(body_bytes)
+                if not isinstance(data_obj, dict):
+                    raise ValueError()
+                requested = data_obj.get("model")
+                if requested is not None and not isinstance(requested, str):
+                    raise ValueError()
+            except (ValueError, UnicodeDecodeError):
+                await send_model_error(client_writer, "400 Bad Request", "Expected a JSON object with a string model")
+                return
+
+        # Hold this gate until the complete response (including SSE) has finished.
+        inference_lock = request_lock()
+        if inference_lock.locked():
+            await send_model_error(client_writer, "409 Conflict", "模型正被其他請求使用，請稍後重試")
+            return
+        await inference_lock.acquire()
         state.active_requests += 1
         state.last_active_time = time.time()
         try:
-            ok = await start_llm()
+            if requested not in (None, "", "default"):
+                state.models = scan_models()
+                target = find_requested_model(requested)
+                if target is None:
+                    await send_model_error(client_writer, "400 Bad Request", f"Unknown model: {requested}")
+                    return
+                if not state.current_model or target["id"] != state.current_model["id"]:
+                    ok, msg = await switch_model(target["id"])
+                else:
+                    ok = await start_llm()
+            else:
+                ok = await start_llm()
             if not ok:
-                err = b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"LLM failed to start\"}"
-                client_writer.write(err)
-                await client_writer.drain()
+                await send_model_error(client_writer, "503 Service Unavailable", "LLM failed to start")
                 return
 
-            # 智慧正規化請求 Body 中的 model 名稱（適用於 rapid-mlx / omlx / llama-server）
-            header_bytes, sep, body_bytes = initial_data.partition(b"\r\n\r\n")
             if sep:
-                cl_val = None
-                for line in header_bytes.split(b"\r\n"):
-                    if line.lower().startswith(b"content-length:"):
-                        try:
-                            cl_val = int(line.split(b":", 1)[1].strip())
-                        except Exception:
-                            pass
-                        break
-                if cl_val is not None and len(body_bytes) < cl_val:
-                    while len(body_bytes) < cl_val:
-                        chunk = await client_reader.read(min(4096, cl_val - len(body_bytes)))
-                        if not chunk:
-                            break
-                        body_bytes += chunk
-
-                if b"application/json" in header_bytes and b'"model"' in body_bytes and state.current_model:
+                if b"application/json" in header_bytes.lower() and state.current_model:
                     try:
                         data_obj = json.loads(body_bytes.decode("utf-8"))
-                        if state.current_model["type"] == "mlx":
+                        if state.current_model["type"] == "apple-api":
+                            data_obj["model"] = "permissive"
+                            messages = data_obj.get("messages", [])
+                            system_chars = sum(len(m.get("content", "")) for m in messages if m.get("role") == "system" and isinstance(m.get("content"), str))
+                            user_chars = sum(len(m.get("content", "")) for m in messages if m.get("role") == "user" and isinstance(m.get("content"), str))
+                            print(f"[Apple 請求] system={system_chars} chars, input={user_chars} chars", flush=True)
+                        elif state.current_model["type"] == "apple":
+                            data_obj["model"] = "system"
+                        elif state.current_model["type"] == "mlx":
                             data_obj["model"] = state.current_model["path"]
                         elif state.current_model["type"] == "omlx":
                             data_obj["model"] = state.current_model["id"]
@@ -359,7 +435,11 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 new_headers = []
                 has_conn = False
                 for line in header_bytes.split(b"\r\n"):
-                    if line.lower().startswith(b"content-length:"):
+                    if line == header_bytes.split(b"\r\n", 1)[0] and state.current_model and state.current_model["type"] == "apple-api":
+                        request_parts = line.split(b" ", 2)
+                        request_parts[1] = b"/api" + request_parts[1]
+                        new_headers.append(b" ".join(request_parts))
+                    elif line.lower().startswith(b"content-length:"):
                         new_headers.append(f"Content-Length: {len(body_bytes)}".encode("utf-8"))
                     elif line.lower().startswith(b"connection:"):
                         new_headers.append(b"Connection: close")
@@ -413,8 +493,9 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
             t_client = asyncio.create_task(fwd_client_to_llm())
             t_llm = asyncio.create_task(fwd_llm_to_client())
 
-            # LLM 傳送完回應 (t_llm 完成) 或客戶端斷開 (t_client 完成) 即結束
-            done, pending = await asyncio.wait([t_client, t_llm], return_when=asyncio.FIRST_COMPLETED)
+            # 等待完整回應；客戶端只關閉寫入方向時，仍保留串流與忙碌狀態。
+            await t_llm
+            pending = [t_client]
             for t in pending:
                 t.cancel()
                 try:
@@ -428,12 +509,15 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
             except Exception:
                 pass
         finally:
+            inference_lock.release()
+            inference_lock = None
             state.active_requests = max(0, state.active_requests - 1)
             state.last_active_time = time.time()
 
     except Exception:
         pass
     finally:
+        _proxy_tasks.discard(task)
         client_writer.close()
         try:
             await client_writer.wait_closed()

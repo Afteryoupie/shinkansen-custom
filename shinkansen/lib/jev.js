@@ -2,7 +2,7 @@
  * lib/jev.js — TypeSafe AI Jev (System One) 類型化決策模組
  * 專為 YouTube 字幕與影片翻譯設計的次秒級決策過濾層：
  *   1. is_valid (Boolean): 判定是否為有效人聲發言（過濾純音效標籤 [Music]、[Applause]、♪、幻覺字幕）
- *   2. needs_translation (Boolean): 判定是否需要翻譯（若已是目標語言或 OK/Hello 等通用詞則放行原文）
+ *   2. needs_translation (Boolean): 判定是否需要翻譯（僅在已是目標語言時放行原文）
  *   3. detected_lang (Choice): 語意語系判定 (ja, en, ko, zh, etc.)
  *
  * 高可用性（Graceful Fallback）：
@@ -23,13 +23,7 @@ export class JevDecisionEngine {
   static HALLUCINATION_PATTERNS = [
     /^\[(音楽|拍手|笑い|歓声|music|applause|laughter|silence)\]$/i,
     /^[♪♫♩♬\s.,!?:;_\-]+$/,
-    /^(ご視聴ありがとうございました|視聴ありがとうございました|チャンネル登録|thank you for watching|please subscribe|subtitles by).*$/i,
   ];
-
-  static UNIVERSAL_TERMS = new Set([
-    'ok', 'okay', 'yes', 'no', 'hello', 'hi', 'bye', 'goodbye', 'thanks', 'thank you',
-    'lol', 'haha', 'wow', 'gg', 'nice', 'cool', 'yeah', 'yep', 'nope', 'oh', 'ah'
-  ]);
 
   /**
    * 批次評估多個字幕文字
@@ -57,7 +51,7 @@ export class JevDecisionEngine {
         {
           id: `needs_${idx}`,
           type: 'boolean',
-          question: `Does this text need translation to ${targetLang}? (False if already in ${targetLang} or simple universal greeting like OK/Hello)`,
+          question: `Does this text need translation to ${targetLang}? (False only if already entirely in ${targetLang}; greetings must also be translated)`,
         },
         {
           id: `lang_${idx}`,
@@ -90,11 +84,13 @@ export class JevDecisionEngine {
           const v = decisions[`valid_${idx}`];
           const n = decisions[`needs_${idx}`];
           const l = decisions[`lang_${idx}`];
-          if (!v || !n) return this.fallbackEvaluate(t, targetLang);
+          const fallback = this.fallbackEvaluate(t, targetLang);
+          if (!v || !n || typeof v.answer !== 'boolean' || typeof n.answer !== 'boolean' ||
+              Math.min(v.confidence ?? 0, n.confidence ?? 0) < this.confidenceThreshold) return fallback;
 
           return {
-            is_valid: Boolean(v.answer),
-            needs_translation: Boolean(n.answer),
+            is_valid: fallback.is_valid,
+            needs_translation: fallback.needs_translation || n.answer,
             detected_lang: l?.answer || 'auto',
             confidence: ((v.confidence || 1) + (n.confidence || 1)) / 2,
             source: 'jev',
@@ -126,12 +122,6 @@ export class JevDecisionEngine {
         break;
       }
     }
-    if (is_valid) {
-      if (t.length >= 6 && new Set(t).size <= 2) is_valid = false;
-      const words = t.split(/\s+/);
-      if (words.length >= 4 && new Set(words).size <= 1) is_valid = false;
-    }
-
     // 2. 語言與翻譯需求判定
     const hasKana = /[\u3040-\u30ff]/.test(t);
     const hasHangul = /[\uac00-\ud7af]/.test(t);
@@ -143,11 +133,7 @@ export class JevDecisionEngine {
     else if (hasHanzi && !hasKana) detected_lang = 'zh';
 
     let needs_translation = true;
-    const cleanLower = t.toLowerCase().replace(/[^\w\s]/g, '').trim();
-    if (JevDecisionEngine.UNIVERSAL_TERMS.has(cleanLower)) {
-      needs_translation = false;
-    } else if (targetLang.startsWith('zh') && detected_lang === 'zh') {
-      // 若目標是繁中且原文已是漢字/中文，不需重複翻譯
+    if (targetLang.startsWith('zh') && detected_lang === 'zh' && !/[A-Za-z]/.test(t)) {
       needs_translation = false;
     }
 

@@ -255,6 +255,30 @@
         </div>
       </div>
       <div id="shortcut-hint"></div>
+      <!-- 懸停翻譯（issue #67）：按住修飾鍵、游標停在段落上只翻該段，content-hover.js。
+           iOS build 預設隱藏整塊，只有裝置有 hover 能力（iPad 接觸控板 / 滑鼠，
+           matchMedia hover+fine pointer）才顯示，options.js 控制 hidden -->
+      <div id="hover-translate-section">
+      <div class="hover-translate-row">
+        <label>
+          <span data-i18n="options.hover.label">懸停翻譯</span>
+          <select id="hoverTranslateModifier">
+            <option value="off" data-i18n="options.hover.mode.off">關閉</option>
+            <option value="shift" data-i18n="options.hover.mode.shift">⇧ Shift</option>
+            <option value="alt" data-i18n="options.hover.mode.alt">⌥ Option / Alt</option>
+            <option value="ctrl" data-i18n="options.hover.mode.ctrl">⌃ Control</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="options.hover.display.label">懸停翻譯顯示方式</span>
+          <select id="hoverTranslateMode">
+            <option value="dual" data-i18n="options.hover.display.dual">雙語對照</option>
+            <option value="single" data-i18n="options.hover.display.single">單語覆蓋</option>
+          </select>
+        </label>
+      </div>
+      <small class="muted" data-i18n="options.hover.hint">按住所選的鍵、把游標移到段落上停一下，只翻譯游標所在的那一段，譯文原地顯示。顯示方式獨立於整頁翻譯的顯示模式，預設雙語對照方便邊讀原文邊看譯文</small>
+      </div>
     </section>
 
     <section>
@@ -409,13 +433,21 @@
       </label>
     </section>
 
-    <!-- 四指觸控翻譯：iOS / iPadOS only，由 options.js 依 IS_IOS_BUILD 控制 hidden -->
-    <section id="four-finger-section" hidden>
-      <h2 data-i18n="options.fourFinger.heading">四指觸控翻譯</h2>
-      <p class="muted" data-i18n="options.fourFinger.intro">預設開啟。在手機 / 平板用四隻手指輕點頁面即翻譯、四指長按用次要預設；容易誤觸發時可在此關閉，懸浮按鈕與硬體鍵盤快速鍵不受此開關影響</p>
-      <label class="toggle">
-        <input type="checkbox" id="fourFingerGesture">
-        <span data-i18n="options.fourFinger.enable">啟用四指觸控手勢</span>
+    <!-- 多指觸控翻譯：只在真觸控裝置（iPhone / iPad）顯示——.ios-only 預設隱藏，
+         body.runtime-ios-touch 才顯示（平台屬性，見 lib/platform.js）；桌面瀏覽器與
+         iOS build 跑在 Mac（無觸控）都不顯示。
+         單一 picker（關閉 / 三指 / 四指）對應 storage 的 fourFingerGesture（enable）+
+         touchGestureFingers（3 | 4），options.js 負責雙向映射 -->
+    <section id="touch-gesture-section" class="ios-only">
+      <h2 data-i18n="options.touchGesture.heading">觸控手勢翻譯</h2>
+      <p class="muted" data-i18n="options.touchGesture.intro">在手機 / 平板用多指輕點頁面即翻譯、多指長按用次要預設。預設四指；iPhone 單手操作可改三指。容易誤觸發時可關閉，懸浮按鈕與硬體鍵盤快速鍵不受影響</p>
+      <label>
+        <span data-i18n="options.touchGesture.label">觸控手勢</span>
+        <select id="touchGestureMode">
+          <option value="off" data-i18n="options.touchGesture.mode.off">關閉</option>
+          <option value="3" data-i18n="options.touchGesture.mode.three">三指輕點</option>
+          <option value="4" data-i18n="options.touchGesture.mode.four">四指輕點</option>
+        </select>
       </label>
     </section>
 
@@ -650,6 +682,7 @@
         <input type="text" id="fixed-domain-input" data-i18n-attr-placeholder="options.glossary.fixed.domainInputPlaceholder" placeholder="或輸入新網域，例如 medium.com">
         <button id="fixed-domain-add-btn" class="secondary" data-i18n="options.glossary.fixed.domainAdd">新增網域</button>
       </div>
+      <p class="muted" data-i18n="options.glossary.fixed.domainHint">網域後面可加路徑限定範圍，例如 example.com/news 只對該路徑之下的頁面生效，並覆蓋整站規則</p>
       <div id="fixed-domain-panel" hidden>
         <div class="glossary-domain-header">
           <span id="fixed-domain-label" class="glossary-domain-name"></span>
@@ -1120,6 +1153,9 @@
           <strong>關閉</strong>：使用 YouTube 自動產生字幕的原始分句邏輯
         </small>
       </label>
+      <small id="yt-asr-local-note" class="muted" hidden data-i18n="options.yt.asr.localStable">
+        本地模型採用固定時間軸、逐句翻譯，避免重複翻譯與重新分句造成字幕延遲或跳動。
+      </small>
       <small id="yt-asr-google-note" class="muted" hidden data-i18n="options.yt.asr.googleDisabled">
         翻譯引擎選 Google Translate 時無法使用 AI 分句——分句需要 LLM，會走 Gemini 並產生費用，此時一律使用 YouTube 原始分句
       </small>

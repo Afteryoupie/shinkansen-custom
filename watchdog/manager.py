@@ -23,8 +23,11 @@ from watchdog.config import (
     MODELS_DIR,
     VENV_BIN,
     LLAMA_BIN,
+    IFM_LLAMA_BIN,
     RAPID_BIN,
     OMLX_BIN,
+    FM_BIN,
+    APPLE_API_BIN,
     LLM_INTERNAL_PORT,
     DEFAULT_IDLE_TIMEOUT,
     is_translation_model,
@@ -51,6 +54,24 @@ def find_matching_mmproj(model_name: str) -> Optional[str]:
 def scan_models() -> List[Dict[str, Any]]:
     """動態掃描 ~/LLM/Models 目錄並辨識 MLX、oQ/oMLX 與 GGUF 模型（Windows 自動過濾排除非 GGUF）"""
     discovered = []
+    if sys.platform == "darwin" and APPLE_API_BIN.is_file():
+        discovered.append({
+            "id": "apple-intelligence-translation",
+            "name": "Apple Foundation Models",
+            "path": "permissive",
+            "type": "apple-api",
+            "is_translation": True,
+            "idle_timeout": DEFAULT_IDLE_TIMEOUT,
+        })
+    elif sys.platform == "darwin" and FM_BIN.is_file():
+        discovered.append({
+            "id": "apple-intelligence-translation",
+            "name": "Apple Foundation Models",
+            "path": "system",
+            "type": "apple",
+            "is_translation": False,
+            "idle_timeout": DEFAULT_IDLE_TIMEOUT,
+        })
     if not MODELS_DIR.exists():
         return discovered
 
@@ -136,17 +157,28 @@ def init_models():
         state.current_model = state.models[0]
         print(f"[系統] 預設模型: {state.current_model['name']} (類型: {state.current_model['type']})")
 
-async def is_llm_ready() -> bool:
+async def _probe_llm_ready() -> bool:
     """測試推論引擎內部連接埠是否已就緒（HTTP /health 200 OK）"""
+    writer = None
     try:
         reader, writer = await asyncio.open_connection("127.0.0.1", LLM_INTERNAL_PORT)
-        writer.write(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        model_type = state.current_model["type"] if state.current_model else ""
+        path = {"apple": "/v1/models", "apple-api": "/api/v1/models"}.get(model_type, "/health")
+        writer.write(f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".encode())
         await writer.drain()
         resp = await reader.read(512)
-        writer.close()
-        await writer.wait_closed()
         return b"200 OK" in resp or b'"ok"' in resp or b'"status":"ok"' in resp or b'"status": "ok"' in resp
     except Exception:
+        return False
+    finally:
+        if writer is not None:
+            writer.close()
+
+async def is_llm_ready() -> bool:
+    """Bound each probe so a loading server cannot stall the startup deadline."""
+    try:
+        return await asyncio.wait_for(_probe_llm_ready(), timeout=2)
+    except asyncio.TimeoutError:
         return False
 
 def calculate_optimal_context(model_path: str, model_name: str) -> int:
@@ -215,25 +247,62 @@ async def start_llm() -> bool:
         state.is_starting = True
 
         try:
-            if m["type"] == "gguf":
-                ctx = str(calculate_optimal_context(m["path"], m["name"]))
+            if m["type"] == "apple-api":
+                cmd = [str(APPLE_API_BIN), "serve", "--hostname", "127.0.0.1",
+                       "--port", str(LLM_INTERNAL_PORT)]
+            elif m["type"] == "apple":
+                check = await asyncio.create_subprocess_exec(
+                    str(FM_BIN), "available", "--model", "system",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    stdout, stderr = await asyncio.wait_for(check.communicate(), timeout=15)
+                except asyncio.TimeoutError:
+                    check.kill()
+                    await check.wait()
+                    print("[✗ Apple] 模型可用性檢查逾時", flush=True)
+                    return False
+                if check.returncode:
+                    print("[✗ Apple] " + (stderr or stdout).decode(errors="replace").strip(), flush=True)
+                    print("請先在終端機執行 sudo fm license，並確認 Apple Intelligence 已啟用。", flush=True)
+                    return False
+                cmd = [str(FM_BIN), "serve",
+                       "--host", "127.0.0.1", "--port", str(LLM_INTERNAL_PORT)]
+            elif m["type"] == "gguf":
+                is_k2_horizon = "k2-horizon" in " ".join(
+                    str(m.get(key, "")) for key in ("id", "name", "path")
+                ).lower()
+                llama_bin = IFM_LLAMA_BIN if is_k2_horizon else LLAMA_BIN
+                if is_k2_horizon and not llama_bin.is_file():
+                    raise FileNotFoundError(
+                        f"K2-Horizon 需要 IFM llama-server：{llama_bin}"
+                    )
+                ctx = "16384" if is_k2_horizon else str(calculate_optimal_context(m["path"], m["name"]))
                 print(f"\n[⚡ 啟動] 正在拉起本地模型: {m['name']} ({m['type'].upper()}, Context: {ctx})...", flush=True)
-                cmd = [
-                    str(LLAMA_BIN),
-                    "--model", m["path"],
-                    "--host", "127.0.0.1",
-                    "--port", str(LLM_INTERNAL_PORT),
-                    "--ctx-size", ctx,
-                    "--n-gpu-layers", "99",
-                    "--batch-size", "512",
-                    "--ubatch-size", "512",
-                    "--flash-attn", "on",
-                    "--cache-type-k", "q8_0",
-                    "--cache-type-v", "q8_0",
-                ]
-                mmproj_path = find_matching_mmproj(m["name"])
-                if mmproj_path:
-                    cmd.extend(["--mmproj", mmproj_path])
+                if is_k2_horizon:
+                    cmd = [
+                        str(llama_bin), "-m", m["path"],
+                        "--host", "127.0.0.1", "--port", str(LLM_INTERNAL_PORT),
+                        "-c", ctx, "-np", "1", "-ngl", "99",
+                        "--jinja", "--no-webui",
+                    ]
+                else:
+                    cmd = [
+                        str(llama_bin),
+                        "--model", m["path"],
+                        "--host", "127.0.0.1",
+                        "--port", str(LLM_INTERNAL_PORT),
+                        "--ctx-size", ctx,
+                        "--n-gpu-layers", "99",
+                        "--batch-size", "512",
+                        "--ubatch-size", "512",
+                        "--flash-attn", "on",
+                        "--cache-type-k", "q8_0",
+                        "--cache-type-v", "q8_0",
+                    ]
+                    mmproj_path = find_matching_mmproj(m["name"])
+                    if mmproj_path:
+                        cmd.extend(["--mmproj", mmproj_path])
             elif m["type"] == "omlx":
                 cmd = [
                     str(OMLX_BIN), "serve",
@@ -283,21 +352,27 @@ async def start_llm() -> bool:
 
             state.llm_proc = subprocess.Popen(**popen_kwargs)
 
-            # 等待就緒 (最多 25 秒)
-            t0 = time.time()
-            while time.time() - t0 < 25:
+            # K2 cold starts may include disk loading and Metal initialization.
+            startup_timeout = 120 if m["type"] == "gguf" and "k2-horizon" in " ".join(
+                str(m.get(key, "")) for key in ("id", "name", "path")
+            ).lower() else 25
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < startup_timeout:
+                if state.llm_proc is None:
+                    return False  # Explicit sleep/stop while loading.
                 if state.llm_proc.poll() is not None:
                     print(f"[✗ 錯誤] LLM 進程意外終止 (退出碼: {state.llm_proc.returncode})", flush=True)
                     state.llm_proc = None
                     return False
                 if await is_llm_ready():
-                    cost = time.time() - t0
+                    cost = time.monotonic() - t0
                     print(f"[✓ 就緒] {m['name']} 已就緒！耗時 {cost:.2f}s (PID: {state.llm_proc.pid})", flush=True)
                     state.last_active_time = time.time()
                     return True
                 await asyncio.sleep(0.1)
 
-            print("[✗ 逾時] 等待 LLM 啟動逾時", flush=True)
+            print(f"[✗ 逾時] 等待 LLM 啟動超過 {startup_timeout} 秒", flush=True)
+            stop_llm()  # Do not leave an unready process that a retry treats as ready.
             return False
         finally:
             state.is_starting = False
@@ -328,7 +403,6 @@ def stop_llm():
         except Exception:
             pass
         state.llm_proc = None
-        state.active_requests = 0
         print("[✓ 已休眠] 顯存與記憶體已 100% 釋放。\n", flush=True)
 
 async def switch_model(target_id: str) -> Tuple[bool, str]:
@@ -362,7 +436,7 @@ async def idle_checker():
             await asyncio.sleep(2)
             if not state.auto_sleep_enabled:
                 continue
-            if state.llm_proc and state.llm_proc.poll() is None and state.active_requests == 0:
+            if not state.is_starting and state.llm_proc and state.llm_proc.poll() is None and state.active_requests == 0:
                 m = state.current_model
                 timeout = m.get("idle_timeout", 0) if m else 0
                 if timeout > 0:

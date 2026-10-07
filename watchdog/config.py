@@ -62,9 +62,13 @@ def find_llama_bin() -> Path:
     return candidates[0] if (sys.platform == "win32" and candidates[0].is_file()) else (PROJECT_DIR / bin_name if sys.platform == "win32" else Path("/opt/homebrew/bin/llama-server"))
 
 LLAMA_BIN = find_llama_bin()
+# IFM's llama.cpp fork adds support for K2-Horizon GGUF models.
+IFM_LLAMA_BIN = Path.home() / "LLM" / "Tools" / "llama-cpp-k2horizon" / "bin" / ("llama-server.exe" if sys.platform == "win32" else "llama-server")
 RAPID_BIN = VENV_BIN / "rapid-mlx"
 MLX_BIN = VENV_BIN / "mlx_lm.server"
 OMLX_BIN = VENV_BIN / "omlx"
+FM_BIN = Path("/usr/bin/fm")
+APPLE_API_BIN = PROJECT_DIR / "backends" / "apple-intelligence-api" / ".build" / "release" / "AppleIntelligenceApi"
 
 # 網路埠號配置
 PUBLIC_PORT = 8080

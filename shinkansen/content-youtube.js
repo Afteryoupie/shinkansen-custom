@@ -337,9 +337,17 @@
     return m ? m[1] : null;
   }
 
+  function _isLocalSubtitleProvider(provider) {
+    try {
+      const host = new URL(provider?.baseUrl || '').hostname;
+      return ['localhost', '127.0.0.1', '[::1]'].includes(host) ||
+        /apple|foundation.?models/i.test(provider?.model || '');
+    } catch (_) { return false; }
+  }
+
   async function getYtConfig() {
     if (SK.YT.config) return SK.YT.config;
-    const saved = await browser.storage.sync.get(['ytSubtitle', 'displayMode']);
+    const saved = await browser.storage.sync.get(['ytSubtitle', 'displayMode', 'customProvider', 'targetLanguage']);
     // v2.0.85:字幕雙語對照與整頁「顯示模式」合併——bilingualMode 唯一來源是
     // displayMode === 'dual'(單一資料源,CLAUDE.md 工作流原則 §5)。舊版 popup toggle
     // 寫的 ytSubtitle.bilingualMode 殘留 key 一律忽略(spread 後強制覆寫)。
@@ -347,6 +355,8 @@
       ...DEFAULT_YT_CONFIG,
       ...(saved.ytSubtitle || {}),
       bilingualMode: saved.displayMode === 'dual',
+      localModel: _isLocalSubtitleProvider(saved.customProvider),
+      targetLanguage: saved.targetLanguage || SK.STATE?.targetLanguage || 'zh-TW',
     };
     return SK.YT.config;
   }
@@ -684,7 +694,60 @@
     YT._mwebCcRetries = 0;
   }
 
+  // issue #68（2026-09-30）：播放器 popup（齒輪設定選單 / 右鍵選單等 .ytp-popup）開著時，
+  // 程式化點 CC 按鈕（或 API 重載 captions module）會讓 YouTube 把 popup 收掉——使用者正要
+  // 選畫質 / 播放速度就被關掉；autoTranslate 預設開，且字幕沒到前每 3s 重試一次，等於選單
+  // 一分鐘內反覆被關（probe-yt-gear-menu.js 實測：觸發後 +1.0s 選單關閉，之後每 3s 一次）。
+  // 結構性通則（§8）：播放器內任一 .ytp-popup 正在顯示（display ≠ none 且非 aria-hidden）=
+  // 使用者正在跟播放器 UI 互動 → 延後重載，每 POPUP_POLL_MS 回頭看，popup 收起才真的跑。
+  // 上限 POPUP_WAIT_MAX_MS，超過照跑（避免使用者一直開著選單讓字幕永遠不啟動）。
+  // stop / 新影片 reset 清 timer。
+  const POPUP_POLL_MS = 500;
+  const POPUP_WAIT_MAX_MS = 60000;
+
+  function _isPlayerPopupOpen() {
+    const player = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
+    if (!player) return false;
+    for (const el of player.querySelectorAll('.ytp-popup')) {
+      if (el.getAttribute('aria-hidden') === 'true') continue; // 收合動畫中 = 已關
+      if (getComputedStyle(el).display === 'none') continue;
+      return true;
+    }
+    return false;
+  }
+
+  // 回傳 true = 本次 forceSubtitleReload 已延後（呼叫端直接 return）
+  function _deferReloadWhilePopupOpen() {
+    const YT = SK.YT;
+    if (YT._popupDeferTimer) return true; // 已在等 popup 收起，不重複排
+    if (!_isPlayerPopupOpen()) { YT._popupDeferSince = 0; return false; }
+    if (!YT._popupDeferSince) {
+      YT._popupDeferSince = Date.now();
+      SK.sendLog('info', 'youtube', 'forceSubtitleReload deferred: player popup open');
+    } else if (Date.now() - YT._popupDeferSince > POPUP_WAIT_MAX_MS) {
+      SK.sendLog('info', 'youtube', 'forceSubtitleReload: popup open too long, proceeding anyway');
+      YT._popupDeferSince = 0;
+      return false;
+    }
+    YT._popupDeferTimer = setTimeout(() => {
+      YT._popupDeferTimer = null;
+      if (!YT.active) { YT._popupDeferSince = 0; return; }
+      forceSubtitleReload();
+    }, POPUP_POLL_MS);
+    return true;
+  }
+
+  function _clearPopupDefer() {
+    const YT = SK.YT;
+    if (YT._popupDeferTimer) {
+      clearTimeout(YT._popupDeferTimer);
+      YT._popupDeferTimer = null;
+    }
+    YT._popupDeferSince = 0;
+  }
+
   async function forceSubtitleReload() {
+    if (_deferReloadWhilePopupOpen()) return; // issue #68：播放器選單開著就先不動 CC
     const btn = document.querySelector('.ytp-subtitles-button');
     if (!btn) {
       // 結構特徵 fallback:CC 按鈕不存在(mweb 播放器 UI 沒有此按鈕)→ player API 路徑。
@@ -746,7 +809,7 @@
 
   function buildTranslationUnits(segs, preserve) {
     if (!preserve) {
-      return segs.map(s => ({ text: s.text, keys: [s.normText] }));
+      return segs.map(s => ({ text: s.text, keys: [s.normText], startMs: s.startMs }));
     }
     const units = [];
     let i = 0;
@@ -760,14 +823,84 @@
           group.push(segs[j]);
           j++;
         }
-        units.push({ text: group.map(s => s.text).join(' '), keys: group.map(s => s.normText) });
+        units.push({ text: group.map(s => s.text).join(' '), keys: group.map(s => s.normText), startMs: seg.startMs });
         i = j;
       } else {
-        units.push({ text: seg.text, keys: [seg.normText] });
+        units.push({ text: seg.text, keys: [seg.normText], startMs: seg.startMs });
         i++;
       }
     }
     return units;
+  }
+
+  // null = 漏翻/無效；'' 只接受 background 明確標示的音效過濾。
+  function _subtitleText(source, value, intentionalEmpty = false) {
+    if (typeof value !== 'string') return null;
+    const clean = SK.sanitizeMarkers(value).replace(/\\n|\n/g, ' ').trim();
+    if (!clean) return intentionalEmpty ? '' : null;
+    const target = SK.YT.config?.targetLanguage || SK.STATE?.targetLanguage || 'zh-TW';
+    if (/^(zh|ja|ko)/.test(target)) {
+      const hasTarget = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(clean);
+      const words = clean.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || [];
+      const greeting = /^(hello|hi|bye|goodbye|thanks|thank you|yes|no|yeah|okay)[.!?\s]*$/i.test(clean);
+      // 品牌/縮寫可保留；一般英文句子與問候不可冒充完成的中文譯文。
+      if (!hasTarget && (greeting || (words.length >= 2 && words.some(w => /^[a-z]/.test(w))))) return null;
+      if (/^zh/.test(target) && /[\u3040-\u30ff\uac00-\ud7af]/.test(clean) && clean === String(source).trim()) return null;
+    }
+    return typeof SK.stripSubtitlePunctuation === 'function' ? SK.stripSubtitlePunctuation(clean) : clean;
+  }
+
+  async function _translateSubtitleTexts(texts, type, generation) {
+    const current = () => SK.YT.active && generation === (SK.YT.captionSourceGen || 0);
+    const usage = {};
+    const send = async (input, skipCache = false) => {
+      if (!current()) throw new Error('Subtitle session changed');
+      const res = await SK.safeSendMessage({ type, payload: { texts: input, glossary: null, skipCache } });
+      for (const [key, value] of Object.entries(res?.usage || {})) {
+        if (typeof value === 'number') usage[key] = (usage[key] || 0) + value;
+      }
+      if (!current()) throw new Error('Subtitle session changed');
+      if (!res?.ok) throw new Error(SK.i18n.bgErrorMessage(res) || 'Subtitle translation failed');
+      // 段數錯誤時不可猜位置：逐段補翻，以免第 N 段譯文被塞到 N+1 的時間上。
+      if (!Array.isArray(res.result) || res.result.length !== input.length) return input.map(() => null);
+      return input.map((source, i) => _subtitleText(source, res.result[i], res.intentionalEmpty?.includes(i)));
+    };
+    let result;
+    try { result = await send(texts); }
+    catch (error) {
+      if (!current()) throw error;
+      SK.sendLog('warn', 'youtube', 'subtitle batch failed, retrying individual units', { error: error.message });
+      result = texts.map(() => null);
+    }
+    for (let i = 0; i < result.length; i++) {
+      if (result[i] !== null) continue;
+      try { result[i] = (await send([texts[i]], true))[0]; }
+      catch (error) {
+        if (!current()) throw error;
+        SK.sendLog('warn', 'youtube', 'subtitle retry failed', { index: i, error: error.message });
+      }
+    }
+    return { ok: true, result, usage };
+  }
+  SK._translateSubtitleTexts = _translateSubtitleTexts;
+
+  function _prioritizeCurrent(items, startOf, nowMs) {
+    let current = -1;
+    for (let i = 0; i < items.length; i++) {
+      if (startOf(items[i]) <= nowMs) current = i;
+    }
+    if (current > 0) items.push(...items.splice(0, current));
+  }
+
+  async function _settleSubtitleBatches(items, run) {
+    const config = SK.YT.config;
+    if (!(config?.engine === 'openai-compat' && config.localModel)) return Promise.allSettled(items.map(run));
+    const results = [];
+    for (let i = 0; i < items.length; i++) {
+      try { results.push({ status: 'fulfilled', value: await run(items[i], i) }); }
+      catch (reason) { results.push({ status: 'rejected', reason }); }
+    }
+    return results;
   }
 
   // ─── ASR 模式視窗翻譯(D',timestamp mode) ─────
@@ -895,9 +1028,21 @@
   // 由 resolveEntryTimeline 計入 droppedCount（與舊協定的幻覺 s 同一路徑）。
   function _parseAsrLlmOutput(text, segs, batchEndMs) {
     const stripped = _stripJsonFence(text || '');
-    if (/^\s*\[/.test(stripped)) return _parseAsrResponse(stripped);
+    if (/^\s*\[/.test(stripped)) {
+      const legacy = _parseAsrResponse(stripped);
+      let nextStart = segs[0]?.startMs;
+      const boundaries = new Set([...segs.map(seg => seg.startMs), batchEndMs]);
+      for (const entry of legacy) {
+        if (!entry || entry.s !== nextStart || !boundaries.has(entry.e) || entry.e <= entry.s ||
+            typeof entry.t !== 'string' || !entry.t.trim()) throw new Error('ASR response: invalid legacy timeline');
+        nextStart = entry.e;
+      }
+      if (!legacy.length || nextStart !== batchEndMs) throw new Error('ASR response: incomplete legacy timeline');
+      return legacy;
+    }
     const entries = [];
     let matched = 0;
+    let expectedIndex = 1;
     for (const line of stripped.split('\n')) {
       if (!line.trim()) continue;
       const m = line.match(_ASR_LLM_LINE_RE);
@@ -905,7 +1050,10 @@
       matched++;
       let a = Number(m[1]);
       let b = m[2] != null ? Number(m[2]) : a;
-      if (b < a) [a, b] = [b, a];
+      if (a !== expectedIndex || b < a || b > segs.length) {
+        throw new Error('ASR response: incomplete or overlapping segment ranges');
+      }
+      expectedIndex = b + 1;
       const segA = segs[a - 1];
       const segB = segs[b - 1];
       const rawTrans = m[3];
@@ -916,7 +1064,9 @@
       const next = segs[b];
       entries.push({ s: segA.startMs, e: next ? next.startMs : batchEndMs, t: cleanTrans });
     }
-    if (matched === 0) throw new Error('ASR response: no parsable lines');
+    if (matched === 0 || expectedIndex !== segs.length + 1) {
+      throw new Error('ASR response: missing subtitle segments');
+    }
     return entries;
   }
 
@@ -1013,11 +1163,14 @@
       if (i === pieces.length - 1) {
         end = endMs;   // 末片收在原 endMs
       } else {
-        end = startMs + Math.round(durMs * acc / total);
+        // 吸附前先保留後續每片的最短顯示時間，避免切點跳太遠後下一片倒退被丟棄。
+        const earliest = cursor + SK.ASR_CUE_MIN_PIECE_MS;
+        const latest = endMs - (pieces.length - i - 1) * SK.ASR_CUE_MIN_PIECE_MS;
+        end = Math.max(earliest, Math.min(latest, startMs + Math.round(durMs * acc / total)));
         let best = null;
         let bestDist = _ASR_SPLIT_SNAP_MS + 1;
         for (const onset of onsets) {
-          if (onset <= cursor) continue;
+          if (onset < earliest || onset > latest) continue;
           const d = Math.abs(onset - end);
           if (d < bestDist) { bestDist = d; best = onset; }
         }
@@ -1051,7 +1204,6 @@
     'essentially', 'because', 'and', 'but', 'which', 'so',
     'where', 'what', 'now', 'or', 'how', 'after',
   ]);
-  const _ASR_SKIP_WORDS = new Set(['uh']);
   const _ASR_END_WORDS = ['in', 'is', 'and', 'are', 'not', 'an', 'a', 'some', 'the',
     'but', 'our', 'for', 'of', 'if', 'his', 'her', 'my', 'noticed', 'come',
     'mean', 'why', 'this', 'has', 'make', 'gpt', 'p.m', 'a.m'];
@@ -1064,7 +1216,6 @@
     'だから', 'でも', 'しかし', 'じゃあ', 'さて', 'ところで', 'また', 'あと',
     'ね', 'よ', 'よね', 'わ', 'ぞ', 'さ', 'えーと', 'あの', 'はい', 'うん', 'そうです', 'なるほど'
   ]);
-  const _ASR_SKIP_WORDS_JA = new Set(['えー', 'あのー', 'うーん', 'えっと', 'まあ']);
   const _ASR_END_WORDS_JA = [
     'です', 'ます', 'でした', 'ました', 'だ', 'だった', 'んだ', 'よね', 'かな',
     'ぞ', 'よ', 'ね', 'わ', 'の', 'こと', 'もの', 'て', 'で'
@@ -1079,50 +1230,13 @@
   const _ASR_SENTENCE_MIN_WORD = 20;    // 合句總條數上限(吞併用)
   const _ASR_MAX_WORDS = 30;            // Ile 合併後 word 上限
 
-  // 英文懸掛連詞、介系詞、代名詞、從屬子句/舉例引導詞正規式 (用於偵測破碎斷句並移轉至下一句)
-  const _DANGLING_PATTERN = new RegExp(
-    '\\s+(' +
-    // 1. 類比 / 舉例 / 從屬子句引導短語 (e.g. "like when he decided to", "such as when they tried to")
-    '(?:just\\s+)?(?:like|such\\s+as)\\s+(?:when|if|how|where|what)(?:\\s+(?:he|she|they|we|i|you|it)(?:\\s+(?:decided|wanted|tried|chose|started|had|went|did|was|were|thought|said|felt|seemed|hoped))?(?:\\s+to)?)?|' +
-    '(?:just\\s+)?(?:like|such\\s+as)(?:\\s+(?:he|she|they|we|i|you|it)(?:\\s+(?:decided|wanted|tried|chose|started|had|went|did|was|were))?(?:\\s+to)?)?|' +
-    '(?:when|if|because|although|while|since)\\s+(?:he|she|they|we|i|you|it)(?:\\s+(?:decided|wanted|tried|chose|started|had|went|did|was|were))?(?:\\s+to)?|' +
-    // 2. 複合連詞與介系詞片語
-    'but\\s+when|but\\s+as|and\\s+as|and\\s+this|and\\s+that|so\\s+that|and\\s+then|but\\s+then|' +
-    'in\\s+the|to\\s+the|of\\s+the|on\\s+the|at\\s+the|for\\s+the|with\\s+the|from\\s+the|about\\s+the|into\\s+the|' +
-    'with\\s+a|with\\s+an|in\\s+a|to\\s+a|of\\s+a|for\\s+a|from\\s+a|' +
-    'but\\s+the|and\\s+the|or\\s+the|so\\s+the|' +
-    // 3. 單字懸掛連詞 / 介系詞 / 冠詞 / 代名詞 / 助動詞
-    'but|and|or|so|when|as|because|if|although|while|since|' +
-    'that|which|where|who|whom|whose|' +
-    'with|for|to|in|on|at|of|from|about|into|like|than|' +
-    'the|a|an|this|these|those|any|some|every|my|your|our|their|his|her|' +
-    'i|we|they|he|she|it|you|' +
-    'is|are|was|were|be|been|being|has|have|had' +
-    ')$', 'i'
-  );
-
-  // 語意邊界平滑化：檢查前後句銜接，若前句句末有從屬句引導詞或懸掛連詞，順移至後句句首
-  function _harmonizeSentenceBoundaries(sentences) {
-    if (!sentences || sentences.length < 2) return sentences;
-    for (let i = 0; i < sentences.length - 1; i++) {
-      const cur = sentences[i];
-      const next = sentences[i + 1];
-      const m = cur.text.match(_DANGLING_PATTERN);
-      if (m) {
-        const dangle = m[1];
-        cur.text = cur.text.slice(0, m.index).trim();
-        next.text = `${dangle} ${next.text}`.trim();
-      }
-    }
-    return sentences.filter(s => s.text.length > 0);
-  }
-
+  // 合句只移動完整來源片段；不可搬動句尾文字而保留舊的時間與 sourceSegs。
   // 計算 ASR 文本長度單位（西文計 word，CJK 計字符數）
   function _countAsrUnits(text, lang) {
     if (!text) return 0;
     if (/^(ja|zh|ko)/i.test(lang || '')) {
-      const cjk = (text.match(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/g) || []).length;
-      const words = text.replace(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/g, ' ').trim().split(/\s+/).filter(Boolean).length;
+      const cjk = (text.match(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\uac00-\ud7af]/g) || []).length;
+      const words = text.replace(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\uac00-\ud7af]/g, ' ').trim().split(/\s+/).filter(Boolean).length;
       return cjk + words;
     }
     return text.split(/\s+/).filter(Boolean).length;
@@ -1137,7 +1251,6 @@
     const isCjk = /^(ja|zh|ko)/i.test(lang || '');
 
     const breakWords = isJa ? _ASR_BREAK_WORDS_JA : _ASR_BREAK_WORDS;
-    const skipWords  = isJa ? _ASR_SKIP_WORDS_JA  : _ASR_SKIP_WORDS;
     const startWords = isJa ? _ASR_START_WORDS_JA : _ASR_START_WORDS;
     const endWords   = isJa ? _ASR_END_WORDS_JA   : _ASR_END_WORDS;
     const maxUnits   = isCjk ? 45 : _ASR_MAX_WORDS;
@@ -1175,9 +1288,6 @@
         }
         if (next && breakWords.has((c.utf8 + next.utf8).trim().toLowerCase()) && m > _ASR_BREAK_MINI_TIME) {
           pushBreak(c, [c, next]); i++; continue;
-        }
-        if (skipWords.has(cTrim) && next) {
-          baseMs = next.tStartMs; cur.push(next); i++; continue;
         }
         if (m <= _ASR_MIN_INTERVAL) {
           baseMs = c.tStartMs; cur.push(c); continue;
@@ -1223,8 +1333,9 @@
       for (let a = out.length - 1; a > 0; a--) {
         const o = out[a];
         const s = out[a - 1];
-        if (o.length <= 0 || o.length > minWordLen) continue;
-        if (o.length + s.length >= sentenceMax) continue;
+        if (_countAsrUnits(joinSegTexts(o.map(e => e.utf8), lang), lang) > minWordLen) continue;
+        if (_countAsrUnits(joinSegTexts([...s, ...o].map(e => e.utf8), lang), lang) >= sentenceMax) continue;
+        if (_ASR_SENTENCE_END_RE.test(s[s.length - 1].utf8.trim())) continue;
         if (o[0].tStartMs - s[s.length - 1].tStartMs > _ASR_MIN_INTERVAL) continue;
         if (o[0].isBreak) continue;
         s.push(...o);
@@ -1235,7 +1346,19 @@
 
     const split    = kle(events);
     const merged   = Ile(split);
-    const compact  = Lle(merged);
+    const compact = [];
+    for (const group of Lle(merged)) {
+      let bounded = [];
+      for (const event of group) {
+        const tooLong = bounded.length && (
+          event.tStartMs - bounded[0].tStartMs >= 8000 ||
+          _countAsrUnits(joinSegTexts([...bounded, event].map(e => e.utf8), lang), lang) > maxUnits ||
+          _ASR_SENTENCE_END_RE.test(bounded[bounded.length - 1].utf8.trim()));
+        if (tooLong) { compact.push(bounded); bounded = []; }
+        bounded.push(event);
+      }
+      if (bounded.length) compact.push(bounded);
+    }
 
     const sentences = compact.map((group, idx) => {
       // 片段是 parseJson3 trim 過的整行，行與行之間必須補空白再合句（原 join('') 讓跨行單字
@@ -1252,7 +1375,7 @@
       };
     }).filter(s => s.text.length > 0);
 
-    return _harmonizeSentenceBoundaries(sentences);
+    return sentences;
   }
 
   // 暴露給 spec 端用(只對自家 spec 開放,不影響 production behaviour)
@@ -1281,11 +1404,15 @@
   //   3) 影片原始語 ASR track（kind='asr'）→ action='switch'
   //   都沒命中 / activeTrack 已對得上目標 → action='noop'，留 YT 既有行為
   //
-  // 影片原始語從 captionTracks 中找出唯一 kind='asr' 的 track 的 languageCode 動態決定
-  // （YouTube 一支影片只會自動產生一條 ASR，語言對應原始口說語）。沒 ASR 軌（罕見：
-  // 創作者只上手動字幕沒讓 YT 跑 ASR）→ 無法可靠決定 sourceLang → noop。
+  // 影片原始語從 captionTracks 的「原音 ASR 軌」languageCode 動態決定(_pickSourceAsrTrack):
+  //   - 只有一條 kind='asr' → 就是它(一般影片,語言對應原始口說語)
+  //   - 多條 kind='asr'(自動配音影片:每條配音音軌各一條 ASR,順序每次載入不同)→ 依
+  //     bridge 帶來的 YouTube 訊號挑:hints.defaultCaptionTrackIndex(原音軌推薦字幕 index)
+  //     → hints.originalAudioLang(原音軌語言)→ 都沒有才退回第一條(舊行為,並記 log)
+  //   沒 ASR 軌（罕見：創作者只上手動字幕沒讓 YT 跑 ASR）→ 無法可靠決定 sourceLang → noop。
+  //   非原音的 ASR 軌(配音 ASR = 機器配音再辨識的二手字幕)不當 P1 原生候選。
   //
-  // Pure function：單純看 tracks + activeTrack + targetLanguage，不 mutate STATE、不 dispatch。
+  // Pure function：單純看 tracks + activeTrack + targetLanguage + hints，不 mutate STATE、不 dispatch。
   // 副作用由 _runCaptionTrackChooser 包裹 + activate flow 決定。
   // 回傳的 sourceLanguage 給 caller 傳遞給 background ASR prompt {sourceLanguage} placeholder 用。
   const _TARGET_NATIVE_LANGS = {
@@ -1315,19 +1442,50 @@
     return _TARGET_NATIVE_LANGS[targetLanguage] || [targetLanguage];
   }
 
+  // 從 tracks 挑出「影片原音」的 ASR 軌(源語推導的單一資料源)。
+  // 回傳 { track: <ASR track> | null, asrCount, via: 'single' | 'default-index' | 'audio-lang' | 'first-fallback' | 'none' }
+  // hints(來自 content-youtube-main.js player response bridge,皆可缺):
+  //   defaultCaptionTrackIndex — audioTracks[defaultAudioTrackIndex].defaultCaptionTrackIndex
+  //   originalAudioLang        — adaptiveFormats 內 audioIsDefault 音軌的語言(如 'en-US')
+  function _pickSourceAsrTrack(tracks, hints) {
+    const asrTracks = tracks.filter(t => t.kind === 'asr');
+    if (asrTracks.length === 0) return { track: null, asrCount: 0, via: 'none' };
+    if (asrTracks.length === 1) return { track: asrTracks[0], asrCount: 1, via: 'single' };
+    // 多條 ASR = 自動配音影片。順序不可信(每次載入不同),必須靠 YouTube 訊號。
+    const h = hints || {};
+    const byIdx = Number.isInteger(h.defaultCaptionTrackIndex) ? tracks[h.defaultCaptionTrackIndex] : null;
+    if (byIdx && byIdx.kind === 'asr') return { track: byIdx, asrCount: asrTracks.length, via: 'default-index' };
+    if (typeof h.originalAudioLang === 'string' && h.originalAudioLang) {
+      const full = h.originalAudioLang.toLowerCase();
+      const base = full.split('-')[0];
+      // 先全碼(en-US = en-US),再 base-lang(en-US ↔ en);ASR 軌 languageCode 與音軌 id 的
+      // 區域標記不一定一致(實測音軌 en-US.4 對 ASR 軌 `en`)
+      const byLang = asrTracks.find(t => (t.languageCode || '').toLowerCase() === full)
+                  || asrTracks.find(t => (t.languageCode || '').toLowerCase().split('-')[0] === base);
+      if (byLang) return { track: byLang, asrCount: asrTracks.length, via: 'audio-lang' };
+    }
+    return { track: asrTracks[0], asrCount: asrTracks.length, via: 'first-fallback' };
+  }
+
+  SK._pickSourceAsrTrack = _pickSourceAsrTrack;
+
   // tracks: [{ languageCode, kind: '' | 'asr', isTranslatable?, vssId?, name? }]
   // activeTrack: { languageCode, kind, translationLanguageCode } | null
   // targetLanguage: 'zh-TW' / 'zh-CN' / 'en' / ...
-  // 回傳： { action: 'skip' | 'switch' | 'switch-to-native' | 'noop', track?: <選中的 track>, reason }
-  function _chooseBestCaptionTrack(tracks, activeTrack, targetLanguage) {
+  // hints: { defaultCaptionTrackIndex?, originalAudioLang? }(見 _pickSourceAsrTrack,可省略)
+  // 回傳： { action: 'skip' | 'switch' | 'switch-to-native' | 'noop', track?: <選中的 track>, reason, sourceVia? }
+  function _chooseBestCaptionTrack(tracks, activeTrack, targetLanguage, hints) {
     if (!Array.isArray(tracks) || tracks.length === 0) {
       return { action: 'noop', reason: 'no-tracks' };
     }
     const targetLangs = _resolveTargetNativeLangs(targetLanguage);
+    const sourceAsr = _pickSourceAsrTrack(tracks, hints);
+    // 非原音的 ASR(配音 ASR)不算任何語言的原生候選:P1 / P1.5 只看手動軌 + 原音 ASR
+    const isNativeCandidate = t => t.kind !== 'asr' || t === sourceAsr.track;
 
-    // P1: target lang 原生 track（任 kind)。不分單語/雙語都優先切到 native target;
+    // P1: target lang 原生 track（手動任意 / ASR 限原音)。不分單語/雙語都優先切到 native target;
     // bilingualMode 下使用者後續手動切到非 target 軌時 Shinkansen 才接管翻譯+overlay。
-    const p1 = tracks.find(t => targetLangs.includes(t.languageCode));
+    const p1 = tracks.find(t => targetLangs.includes(t.languageCode) && isNativeCandidate(t));
     if (p1) {
       const activeIsP1 = activeTrack
         && activeTrack.languageCode === p1.languageCode
@@ -1351,7 +1509,7 @@
     const ambigSet = _AMBIGUOUS_LANGS_BY_TARGET[targetLanguage];
     if (ambigSet) {
       const p1b = tracks.find(t => ambigSet.has(t.languageCode) && (!t.kind || t.kind === ''))
-               || tracks.find(t => ambigSet.has(t.languageCode));
+               || tracks.find(t => ambigSet.has(t.languageCode) && isNativeCandidate(t));
       if (p1b) {
         const activeIsP1b = activeTrack
           && activeTrack.languageCode === p1b.languageCode
@@ -1364,8 +1522,8 @@
       }
     }
 
-    // 從唯一 ASR track 動態推導影片原始語（一支影片 YT 只會產一條 ASR）
-    const asrTrack = tracks.find(t => t.kind === 'asr');
+    // 從原音 ASR track 動態推導影片原始語(多條 ASR 時由 _pickSourceAsrTrack 依 hints 挑)
+    const asrTrack = sourceAsr.track;
     if (!asrTrack) {
       // 沒 ASR 軌 → 無法可靠決定 sourceLang（rare：創作者只上手動字幕）→ noop
       return { action: 'noop', reason: 'no-source-asr-track' };
@@ -1382,7 +1540,7 @@
       && (activeTrack.kind || '') === (desired.kind || '')
       && !activeTrack.translationLanguageCode;
     if (alreadyOnTarget) {
-      return { action: 'noop', track: desired, sourceLanguage: sourceLang, reason: 'already-on-target' };
+      return { action: 'noop', track: desired, sourceLanguage: sourceLang, reason: 'already-on-target', sourceVia: sourceAsr.via };
     }
 
     return {
@@ -1390,6 +1548,7 @@
       track: desired,
       sourceLanguage: sourceLang,
       reason: p2 ? 'p2-source-manual' : 'p3-source-asr',
+      sourceVia: sourceAsr.via,
     };
   }
 
@@ -1411,8 +1570,13 @@
       return 'noop';
     }
 
-    // Step 2：跑 pure function
-    const decision = _chooseBestCaptionTrack(detail.captionTracks, detail.activeTrack, targetLanguage);
+    // Step 2：跑 pure function(hints:自動配音影片多條 ASR 時挑原音 ASR 用)
+    const hints = {
+      defaultCaptionTrackIndex: detail.defaultCaptionTrackIndex,
+      originalAudioLang:        detail.originalAudioLang,
+    };
+    const decision = _chooseBestCaptionTrack(detail.captionTracks, detail.activeTrack, targetLanguage, hints);
+    const asrCount = Array.isArray(detail.captionTracks) ? detail.captionTracks.filter(t => t.kind === 'asr').length : 0;
     SK.sendLog('info', 'youtube', 'caption track chooser', {
       action:         decision.action,
       reason:         decision.reason,
@@ -1423,7 +1587,14 @@
       activeTransLang:detail.activeTrack?.translationLanguageCode,
       targetLanguage,
       trackCount:     detail.captionTracks?.length || 0,
+      asrCount,
+      sourceVia:      decision.sourceVia,
+      hintDefaultIdx: hints.defaultCaptionTrackIndex,
+      hintAudioLang:  hints.originalAudioLang,
     });
+    if (asrCount > 1 && decision.sourceVia === 'first-fallback') {
+      SK.sendLog('warn', 'youtube', 'chooser: multi-ASR video without usable source hints, fell back to first ASR track', { asrCount });
+    }
 
     // Step 3:'switch' 或 'switch-to-native' 命中 → dispatch setOption bridge + 等回應
     if (decision.action === 'switch' || decision.action === 'switch-to-native') {
@@ -2161,13 +2332,6 @@
     if (isBilingual && cue) _updateOverlayAnchor();
   }
 
-  // 中文閱讀時間補償:LLM 自由分句把多段 ASR 合成一句中文,中文密度高,
-  // 原 endMs(=該句最後一個 ASR 片段的 startMs)往往讓使用者讀不完。
-  //   每字 200ms + 最低 800ms 下限(實測校準:250/1000 偏長 ~0.5s)。
-  //   超過下一句 startMs 時由 _findActiveCue 自動 clamp,不會視覺重疊。
-  const _ASR_READ_MS_PER_CHAR = 200;
-  const _ASR_MIN_READ_MS       = 800;
-
   // 加入 cue 到 displayCues。
   //   - 同 startMs upsert(progressive 模式 LLM 覆蓋 heuristic 用)
   //   - opts.replaceRange=true(LLM 路徑用):清除 startMs 落在 (新 cue.startMs, 傳入 endMs)
@@ -2182,8 +2346,7 @@
     const cues = SK.YT.displayCues;
     const trans = String(targetText || '');
     const llmEndMs = Number(endMs) || 0;          // LLM 原始 endMs(供 replaceRange 用)
-    const idealReadMs = Math.max(_ASR_MIN_READ_MS, trans.length * _ASR_READ_MS_PER_CHAR);
-    const adjustedEnd = Math.max(llmEndMs, Number(startMs) + idealReadMs);
+    const adjustedEnd = llmEndMs;
     const next = { startMs, endMs: adjustedEnd, sourceText: sourceText || '', targetText: trans };
 
     // LLM 路徑清除被覆蓋的舊 cues(heuristic 殘留)。
@@ -2644,15 +2807,15 @@
     const firstBatchSize = leadMs <= 0        ? 1
                          : wallLeadMs < 5000   ? 2
                          : wallLeadMs < 10000  ? 4
-                         : wallLeadMs < 15000  ? 6
-                         : 8;
+                         : wallLeadMs < 15000  ? 12
+                         : 16;
     return { videoNowMs, leadMs, playbackRate, wallLeadMs, firstBatchSize };
   }
   SK._calcAdaptiveBatch0 = _calcAdaptiveBatch0; // 測試 seam(youtube-adaptive-batch0.spec)
 
   // **lead-time aware**(D'-adaptive):leadMs = windowStartMs - videoNowMs
   //   - leadMs ≤ 0(緊急,使用者按 Alt+S 時當前位置已在視窗中段)→
-  //       子批 0 從 videoNowMs 開始(skip 已過去的 segments,使用者已聽過),
+  //       子批 0 縮小以提早回填，仍保留視窗內全部來源片段，
   //       跨 2-4s 找 gap,典型 2-4 條,API ~1.5-2.5s 回。
   //   - 0 < leadMs < 5000 → 子批 0 從 windowStart 開始,跨 3-6s 找 gap。
   //   - leadMs ≥ 5000 → 子批 0 從 windowStart 開始,跨 3-8s(原行為)。
@@ -2668,7 +2831,7 @@
 
     const GAP_MS = 500;          // 自然停頓判斷門檻
 
-    // Lead-time-aware:緊急情況下 skip 已過去的 segments,從 videoNowMs 之後第一條開始
+    // Lead-time-aware:依播放位置縮小首批，不丟棄任何來源片段
     const leadMs = (typeof windowStartMs === 'number' && typeof videoNowMs === 'number')
       ? windowStartMs - videoNowMs : Infinity;
     // v1.9.19: wallLeadMs = 影片 lead / 播放速度,真實 wall-clock buffer。
@@ -2676,10 +2839,8 @@
     //          batch size 邊界判斷必須走 wall,否則高速 + 中等 lead 會選太大的批挨延遲。
     const rate = (typeof playbackRate === 'number' && playbackRate > 0) ? playbackRate : 1;
     const wallLeadMs = leadMs / rate;
-    const sub0Start = leadMs <= 0 ? videoNowMs : windowSegs[0].startMs;
-    const segs = leadMs <= 0
-      ? windowSegs.filter(s => s.startMs >= sub0Start)
-      : windowSegs;
+    // 保留整個視窗，包括播放位置之前開始但仍在說的片段。
+    const segs = windowSegs;
     // v1.9.22:filter 後可能變空(seek 到視窗最尾,所有 segs 都 < videoNowMs)。
     //          這條才是「30% rapid-seek 觸發 asr llm overlay failed」的真正 root cause。
     if (segs.length === 0) return [];
@@ -2768,7 +2929,7 @@
   // 將「整批 windowSegs + 第幾批 + 計時起點」交給 Gemini 翻譯,並寫回 captionMap。
   // 抽出來成獨立 async function,讓 _runAsrWindow 可以對「子批 0 await + 子批 1+ allSettled」
   // 套用跟原 _runBatch 同樣的串流注入 pattern。
-  async function _runAsrSubBatch(subSegs, batchIdx, _t0Window, batchApiMsRef) {
+  async function _runAsrSubBatch(subSegs, batchIdx, _t0Window, batchApiMsRef, completedSegs) {
     const YT = SK.YT;
     // 世代快照：await 回來後 SPA 換片 / stop-restart 會換掉 captionMap / displayCues
     // (物件同一個 YT，屬性換新)，不比對就把舊影片的譯文與 cue 寫進新影片 session
@@ -2814,10 +2975,14 @@
     // 句尾片段 uncovered + cue 提早收
     const { cues, droppedCount } = _resolveAsrEntryTimeline(entries, subSegs, batchEndMs);
     let writtenCount = 0;
+    let coveredCount = 0;
     for (const cue of cues) {
       // v1.9.22: 加 `seg &&` null guard 跟 displayCues 同樣 sparse 防禦原則
       const covered = subSegs.filter(seg => seg && seg.startMs >= cue.startMs && seg.startMs < cue.endMs);
       if (covered.length === 0) continue;
+      const validated = _subtitleText(joinSegTexts(covered.map(s => s.text), YT.captionLang), cue.text);
+      if (validated === null) continue;
+      cue.text = validated;
       YT.captionMap.set(covered[0].normText, cue.text);
       for (let k = 1; k < covered.length; k++) {
         // v1.10.46: rawSegments 不再全軌 dedup,covered 內可能有同 normText 的重複行
@@ -2832,6 +2997,8 @@
       for (const piece of _splitLongAsrCue(cue.startMs, cue.endMs, cue.text, _segStarts)) {
         _upsertDisplayCue(piece.startMs, piece.endMs, sourceText, piece.text, { replaceRange: true });
       }
+      covered.forEach(seg => completedSegs?.add(seg));
+      coveredCount += covered.length;
       writtenCount++;
     }
 
@@ -2848,15 +3015,16 @@
       entriesDropped: droppedCount,
       captionMapSize: YT.captionMap.size,
     });
+    if (coveredCount !== subSegs.length) throw new Error('ASR response: untranslated segments');
   }
   SK._runAsrSubBatch = _runAsrSubBatch;
 
-  async function _runAsrWindow(windowSegs, windowStartMs, windowEndMs) {
+  async function _runAsrWindow(windowSegs, windowStartMs, windowEndMs, completedSegs) {
     const YT = SK.YT;
     if (!YT.active) return;
 
     // 1. gap-aware + lead-time aware split:把 windowSegs 切成 1-3 個子批。
-    //    緊急時(video 已過 windowStart)子批 0 從當前播放位置開始 + skip 已過去 segments
+    //    緊急時縮小首批；來源片段全部保留以供 seek 與覆蓋率核對
     const videoNowMs = YT.videoEl ? Math.floor(YT.videoEl.currentTime * 1000) : windowStartMs;
     // v1.9.19: 把 playbackRate 傳進去讓 sub0Max boundary 判斷走 wall time
     const playbackRate = YT.videoEl?.playbackRate || 1;
@@ -2875,6 +3043,7 @@
     //    子批 1+ Promise.allSettled 並行(失敗一批不拖累其他)。
     //    跟原路徑(_runBatch)的 streaming 慣例一致。
     const _t0 = Date.now();
+    const windowGeneration = YT.captionSourceGen || 0;
     const _batchApiMs = new Array(subBatches.length).fill(0);
 
     if (subBatches.length === 0) return 0;
@@ -2882,9 +3051,20 @@
     // 2026-09-11 code review §3.4-2：回傳「res.ok 的子批數」給 translateWindowFrom 判
     // 視窗成功——視窗內 unit 全是 captionMap 已有的 key（副歌 / 重複字幕）時 captionMap
     // size 不會長，靠 size 判斷會誤判失敗 → 永遠不進 translatedWindows → 每次 seek 重送。
+    const runSubBatch = async (segments, index) => {
+      const generation = windowGeneration;
+      if (!YT.active || generation !== (YT.captionSourceGen || 0)) return;
+      try {
+        return await _runAsrSubBatch(segments, index, _t0, _batchApiMs, completedSegs);
+      } catch (error) {
+        if (!YT.active || generation !== (YT.captionSourceGen || 0)) throw error;
+        SK.sendLog('warn', 'youtube', 'ASR alignment failed, translating source-timed units', { error: error.message });
+        return _runAsrHeuristicWindow(segments, windowStartMs, { isUrgent: true, completedSegs });
+      }
+    };
     let _okBatches = 0;
     try {
-      await _runAsrSubBatch(subBatches[0], 0, _t0, _batchApiMs);
+      await runSubBatch(subBatches[0], 0);
       _okBatches++;
       YT.lastApiMs = _batchApiMs[0]; // 第一批 = 最快字幕回填
     } catch (err) {
@@ -2896,9 +3076,7 @@
       return _okBatches;
     }
     if (subBatches.length > 1) {
-      const settled = await Promise.allSettled(
-        subBatches.slice(1).map((sb, i) => _runAsrSubBatch(sb, i + 1, _t0, _batchApiMs))
-      );
+      const settled = await _settleSubtitleBatches(subBatches.slice(1), (sb, i) => runSubBatch(sb, i + 1));
       settled.forEach((r, i) => {
         if (r.status === 'rejected') {
           SK.sendLog('error', 'youtube', `asr sub-batch ${i + 1} failed`, {
@@ -2958,6 +3136,7 @@
     const units = sentences.map(s => ({
       text: s.text,
       keys: s.sourceSegs.map(seg => seg.normText),
+      sourceSegs: s.sourceSegs,
       _cue: {
         startMs: s.startMs, endMs: s.endMs, sourceText: s.text,
         segStarts: s.sourceSegs.map(seg => seg.startMs),
@@ -2972,11 +3151,15 @@
     //          快速顯示前幾條,但接下來 batch 1 size=12 要 ~3-5s 才完,使用者中間視覺
     //          上像 freeze。縮到 4 讓「第 5-N 條」中文也快點冒,代價是 token 攤提變差
     //          (143 t/seg → 194 t/seg,+35%),但 isUrgent 場景 token 不是優先考量。
-    const BATCH = options?.isUrgent ? 4 : 8;
+    const localModel = YT.config?.engine === 'openai-compat' && YT.config.localModel;
+    const BATCH = localModel ? 1 : options?.isUrgent ? 4 : 12;
     // 批次 8 C6:ladder 抽單一資料源 _calcAdaptiveBatch0
-    const { wallLeadMs, firstBatchSize } = _calcAdaptiveBatch0(windowStartMs);
+    const { wallLeadMs, firstBatchSize: adaptiveSize } = _calcAdaptiveBatch0(windowStartMs);
+    const firstBatchSize = localModel ? 1 : adaptiveSize;
     YT.firstBatchSize = firstBatchSize;
     YT.lastLeadMs = wallLeadMs;
+
+    if (localModel) _prioritizeCurrent(units, u => u._cue.startMs, (YT.videoEl?.currentTime || 0) * 1000);
 
     const batches = [];
     if (units.length > 0) {
@@ -2996,10 +3179,7 @@
     const _heuristicMsgType = SK.getSubtitleBatchType(SK.YT.config?.engine, false);
 
     const _runBatch = (batchUnits, b) =>
-      SK.safeSendMessage({
-        type: _heuristicMsgType,
-        payload: { texts: batchUnits.map(u => u.text), glossary: null },
-      }).then(res => {
+      _translateSubtitleTexts(batchUnits.map(u => u.text), _heuristicMsgType, _myGen).then(res => {
         const elapsed = Date.now() - _t0;
         _batchApiMs[b] = elapsed;
         if (!res?.ok) throw new Error(SK.i18n.bgErrorMessage(res) || SK.t('common.errorUnknown'));
@@ -3015,11 +3195,9 @@
         const results = res.result || [];
         for (let j = 0; j < batchUnits.length; j++) {
           const unit = batchUnits[j];
-          // v1.8.10 A:strip LLM 偷懶殘留的 SEP / «N» 標記與標點
-          const markerClean = SK.sanitizeMarkers(results[j] || unit.text);
-          const trans = typeof SK.stripSubtitlePunctuation === 'function'
-            ? SK.stripSubtitlePunctuation(markerClean)
-            : markerClean;
+          // v1.8.10 A:strip LLM 偷懶殘留的 SEP / «N» 標記
+          const trans = results[j];
+          if (trans == null) continue;
           let normTrans = trans;
           if (unit.keys.length === 1) {
             YT.captionMap.set(unit.keys[0], trans);
@@ -3031,6 +3209,7 @@
               if (unit.keys[k] !== unit.keys[0]) YT.captionMap.set(unit.keys[k], '');
             }
           }
+          unit.sourceSegs.forEach(seg => options?.completedSegs?.add(seg));
           // G 路徑:寫 displayCues 給 overlay 用
           // v2.0.54:heuristic 合句(上限 30 words)譯文也可能超長,同過保底拆分
           if (unit._cue) {
@@ -3062,9 +3241,7 @@
       }
       if (!YT.active) { YT.batchApiMs = _batchApiMs; return _okBatches; }
       if (batches.length > 1) {
-        const settled = await Promise.allSettled(
-          batches.slice(1).map((bu, i) => _runBatch(bu, i + 1))
-        );
+        const settled = await _settleSubtitleBatches(batches.slice(1), (bu, i) => _runBatch(bu, i + 1));
         settled.forEach((r, i) => {
           if (r.status === 'rejected') {
             SK.sendLog('error', 'youtube', `asr heuristic batch ${i + 1} failed`, {
@@ -3337,6 +3514,7 @@
 
     // 取得設定
     const config = await getYtConfig();
+    if (!YT.active || _myCaptionGen !== (YT.captionSourceGen || 0) || YT.translatingWindows.has(windowStartMs)) return;
     const windowSizeMs = (config.windowSizeS || 30) * 1000;
     const windowEndMs  = windowStartMs + windowSizeMs;
 
@@ -3356,19 +3534,8 @@
     // 若使用者從中間開始看，前段從未翻過，向後拖時高水位線誤判「已翻」導致字幕空白。
     if (YT.translatedWindows.has(windowStartMs)) return;  // try-finally 會清理
 
-    // v1.9.22: 翻譯成功判斷 — 記錄起始 captionMap.size + displayCues.length,
-    // 翻完比對若都沒長 = 整批 batches 全失敗(SW context invalidated / Gemini reject /
-    // rate limit / 15s timeout × maxRetries 全部用光)。失敗時不加 translatedWindows,
-    // 讓下次 seek 可重試;若加了 translatedWindows 又沒譯文,使用者拖到此視窗會看到
-    // 空白(status 不顯示因 !translatedWindows.has=false,翻譯不重試因同 guard)。
-    const _cmSizeBefore = YT.captionMap.size;
-    const _cuesCountBefore = YT.displayCues.length;
-    // 2026-09-11 code review §3.4-2：size 比對對「視窗內 unit 全是 captionMap 既有 key」
-    // （副歌 / 重複字幕 / seek 回已翻區）的視窗會誤判失敗——captionMap.set 同 key 不長
-    // size、displayCues 非 ASR 路徑也不長 → 永遠不進 translatedWindows → 每次 seek
-    // 回來重送 API + 閃「翻譯中…」。改以「至少一批 res.ok」計數器為主判斷，size 比對
-    // 保留為輔（partial 成功仍算成功，與原語意一致）。
-    let _okBatchCount = 0;
+    // 逐一核對來源片段，部分成功不可把整個視窗鎖成已完成。
+    const completedSegs = new Set();
 
     // 找出本視窗內的字幕（[windowStartMs, windowEndMs)）。
     // v2.0.54:ASR 走 _collectAsrWindowSegs——尾端延伸到句尾標點(邊界不切在句中)
@@ -3408,13 +3575,14 @@
       // ASR 字幕(YouTube 自動語音辨識)有三種合句模式,由 ytSubtitle.asrMode 決定:
       //   - 'heuristic'   = F:啟發式合句 + 既有 TRANSLATE_SUBTITLE_BATCH(逐句翻)。延遲低、精度中。
       //   - 'llm'         = D':LLM 自由合句 + timestamp mode(_runAsrWindow)。延遲高、精度最高。
-      //   - 'progressive' = E:先 heuristic 顯示(秒出),同時 fire-and-forget LLM 跑覆蓋。
+      //   - 'progressive' = E:先 heuristic 顯示，再追蹤 LLM 精修；本地模型只走一次 heuristic 翻譯。
       // v2.0.79:字幕引擎選 Google Translate(免費)時強制 heuristic —— LLM 合句路徑
       //(_runAsrWindow → TRANSLATE_ASR_SUBTITLE_BATCH)固定打 Gemini(Google MT 不支援
       // JSON timestamp 合句模式),使用者選了免費引擎卻仍被扣 Gemini token,且 AI 分句
       // 預設開啟 → 「引擎改成 Google 還是在燒我的 API」(GitHub issue #58)。
       // options 端同步把「AI 分句」toggle 停用並說明,兩邊是同一份事實。
-      const asrMode = (config.engine === 'google')
+      const asrMode = (config.engine === 'google' ||
+        (config.engine === 'openai-compat' && config.localModel && config.asrMode !== 'llm'))
         ? 'heuristic'
         : (config.asrMode || 'progressive');  // 預設 progressive(混合模式)
 
@@ -3422,38 +3590,24 @@
       // wall-clock ms,負數=video 已過視窗起點;這是 seek 進入此視窗的特徵)。
       //   wallLead < 10s 視為「使用者馬上要看到」→ 傳 isUrgent 給 _runAsrHeuristicWindow:
       //   batch 1+ 改 BATCH=4(原 12),讓使用者快點看到第 2-N 條中文。
-      //   LLM(_runAsrWindow)仍照常 fire-and-forget 跑 — LLM 提供更聰明的句子切分,
-      //   即使使用者已滑過,停下時也能看到精緻版。(原 v1.9.22 草案曾跳 LLM,但發現
-      //   使用者抱怨「分句變糙」,改回保留 LLM)。
       const _videoNowMs = YT.videoEl ? YT.videoEl.currentTime * 1000 : 0;
       const _wallLead = (windowStartMs - _videoNowMs) / (YT.videoEl?.playbackRate || 1);
       const _isUrgent = _wallLead < 10000;
 
       if (asrMode === 'heuristic' || asrMode === 'progressive') {
         try {
-          _okBatchCount += (await _runAsrHeuristicWindow(windowSegs, windowStartMs, { isUrgent: _isUrgent })) || 0;
+          await _runAsrHeuristicWindow(windowSegs, windowStartMs, { isUrgent: _isUrgent, completedSegs });
         } catch (err) {
           SK.sendLog('error', 'youtube', 'asr heuristic translation failed', { error: err.message });
         }
       }
 
       if (asrMode === 'llm' || asrMode === 'progressive') {
-        if (asrMode === 'progressive') {
-          // fire-and-forget:LLM 結果回來後寫入 captionMap 會覆蓋 heuristic 版本
-          // (兩條路徑都用同一組 windowSegs.normText 當 key,LLM 路徑的 entry.s/e 區間 ⊆ heuristic 合句區間)
-          _runAsrWindow(windowSegs, windowStartMs, windowEndMs).catch(err => {
-            SK.sendLog('error', 'youtube', 'asr llm overlay failed', {
-              error: err.message,
-              // v1.9.22:保留前 5 行 stack,便於下次再爆時定位
-              stack: (err.stack || '').split('\n').slice(0, 5).join(' | '),
-            });
-          });
-        } else {
-          try {
-            _okBatchCount += (await _runAsrWindow(windowSegs, windowStartMs, windowEndMs)) || 0;
-          } catch (err) {
-            SK.sendLog('error', 'youtube', 'asr window translation failed', { error: err.message });
-          }
+        // 先前 fire-and-forget 讓視窗提早完成；追蹤 LLM 補譯至結束再核對覆蓋率。
+        try {
+          await _runAsrWindow(windowSegs, windowStartMs, windowEndMs, completedSegs);
+        } catch (err) {
+          SK.sendLog('error', 'youtube', 'asr window translation failed', { error: err.message });
         }
       }
     } else if (windowSegs.length > 0) {
@@ -3469,10 +3623,16 @@
       //   8 條/批 × 0.6 條/秒 ≈ 13 秒的字幕 → 30 秒視窗有 2–3 批，串流注入生效。
       // 另一效果：每批 input tokens 減半，API 處理時間從 ~17s 降至 ~7s，
       // adapt look 自然收斂到更小值，buffer overrun 次數減少。
-      // v1.9.19 / v2.2.0: 字幕批次大小由 12 調為 8（實測 8 段 7.4s 零標點，12 段 13.5s 易標點洩漏且延遲跳倍）
-      const BATCH = 8;
+      // v1.9.19: BATCH 8 → 12。直接 Gemini benchmark 量到 size=8/12/16 的 median elapsed
+      //   分別 2.7s / 2.5s / 4.0s,input token / 段在 size=8 是 194 t,size=12 降到 143 t
+      //   (~26% 攤提),size=16 降到 117 t(再 18%)。12 是 elapsed 持平處的甜蜜點:
+      //   token 攤提 ~26% 但 elapsed 不變,純贏;再往上 16 elapsed 跳 60%,留給 batch 0
+      //   adaptive ramp(lead 充裕時)。
+      const localModel = config.engine === 'openai-compat' && config.localModel;
+      const BATCH = localModel ? 1 : 12;
       const preserve = true; // v1.2.38 起固定開啟，已移除設定頁 toggle
       const units = buildTranslationUnits(windowSegs, preserve);
+      if (localModel) _prioritizeCurrent(units, u => u.startMs, (YT.videoEl?.currentTime || 0) * 1000);
       try {
         // 1. 切好每批的 units（批次索引 = 時間順序，batch 0 最早出現）
         // v1.2.50: 自適應首批大小（adaptive first batch size）
@@ -3486,7 +3646,8 @@
         // 第一條字幕出現的延遲從 ~10s（batch=8）有望降至 ~5s（batch=1）。
         // 其餘批次用 BATCH=12 並行送出。
         // 批次 8 C6:ladder 抽單一資料源 _calcAdaptiveBatch0(原 fallback 0 的 drift 一併修正)
-        const { leadMs, playbackRate, wallLeadMs, firstBatchSize } = _calcAdaptiveBatch0(windowStartMs);
+        const { leadMs, playbackRate, wallLeadMs, firstBatchSize: adaptiveSize } = _calcAdaptiveBatch0(windowStartMs);
+        const firstBatchSize = localModel ? 1 : adaptiveSize;
         YT.firstBatchSize = firstBatchSize;
         YT.lastLeadMs     = wallLeadMs;
         SK.sendLog('info', 'youtube', 'adaptive batch0', {
@@ -3540,10 +3701,9 @@
           for (let j = 0; j < batchUnits.length; j++) {
             const unit     = batchUnits[j];
             // v1.8.10 A:寫 captionMap 之前先 strip LLM 偷懶殘留的 SEP / «N» 標記與標點
-            const markerClean = SK.sanitizeMarkers(results[j] || unit.text);
-            const rawTrans = typeof SK.stripSubtitlePunctuation === 'function'
-              ? SK.stripSubtitlePunctuation(markerClean)
-              : markerClean;
+            const rawTrans = results[j];
+            if (rawTrans == null) continue;
+            windowSegs.filter(seg => unit.keys.includes(seg.normText)).forEach(seg => completedSegs.add(seg));
             if (unit.keys.length === 1) {
               YT.captionMap.set(unit.keys[0], rawTrans);
             } else {
@@ -3573,14 +3733,10 @@
         };
 
         const _runBatch = (batchUnits, b) =>
-          SK.safeSendMessage({
-            type: _subtitleMsgType,
-            payload: { texts: batchUnits.map(u => u.text), glossary: null },
-          }).then(res => {
+          _translateSubtitleTexts(batchUnits.map(u => u.text), _subtitleMsgType, _myCaptionGen).then(res => {
             const elapsed = Date.now() - _t0;
             _batchApiMs[b] = elapsed;
             if (!res?.ok) throw new Error(SK.i18n.bgErrorMessage(res) || SK.t('common.errorUnknown'));
-            _okBatchCount++;
             _logWindowUsage(batchUnits.length, res.usage);
             _injectBatchResult(batchUnits, res.result || [], b, elapsed);
           });
@@ -3620,6 +3776,7 @@
           };
           const _clearIdleWatchdog = () => { clearTimeout(_idleTimer); _idleTimer = null; };
 
+          const streamedIndices = new Set();
           const onMessage = (message) => {
             if (!message || message.payload?.streamId !== streamId) return;
             _resetIdleWatchdog(); // 本 stream 有任何動靜 = SW 還活著
@@ -3630,7 +3787,11 @@
               const idx = message.payload.segmentIdx;
               const tr = message.payload.translation;
               if (typeof idx === 'number' && idx >= 0 && idx < batchUnits.length && tr) {
-                _injectBatchResult([batchUnits[idx]], [tr], 0, Date.now() - _t0);
+                const clean = _subtitleText(batchUnits[idx].text, tr);
+                if (clean !== null) {
+                  streamedIndices.add(idx);
+                  _injectBatchResult([batchUnits[idx]], [clean], 0, Date.now() - _t0);
+                }
               }
             } else if (message.type === 'STREAMING_DONE') {
               const elapsed = Date.now() - _t0;
@@ -3638,7 +3799,7 @@
               // v1.8.10 B:hadMismatch=true(LLM 偷懶把 N 段合併成 1 段)時 reject,
               // 觸發既有 mid-failure catch 重翻 batch 0 走 non-streaming(整批 resolve 後一次 split)。
               // segment 0 可能已被 streaming 注入合併譯文(A 已 sanitize),retry 會用乾淨版本覆蓋。
-              if (message.payload.hadMismatch) {
+              if (message.payload.hadMismatch || streamedIndices.size !== batchUnits.length) {
                 SK.sendLog('warn', 'youtube', 'streaming DONE with hadMismatch, triggering retry', { elapsed, totalSegments: message.payload.totalSegments });
                 _clearIdleWatchdog();
                 browser.runtime.onMessage.removeListener(onMessage);
@@ -3716,7 +3877,7 @@
                 : Promise.resolve([]);
               try {
                 const _doneRes = await stream.donePromise;
-                if (_doneRes?.ok) _okBatchCount++;
+                if (!_doneRes?.ok) throw new Error('Subtitle stream aborted');
                 YT.lastApiMs = _batchApiMs[0];
               } catch (streamErr) {
                 SK.sendLog('warn', 'youtube', 'streaming mid-failure, retrying batch 0 non-streaming', { error: streamErr.message });
@@ -3765,9 +3926,7 @@
               return;  // v1.3.5: try-finally 會清理
             }
             if (batches.length > 1) {
-              const settled = await Promise.allSettled(
-                batches.slice(1).map((bu, i) => _runBatch(bu, i + 1))
-              );
+              const settled = await _settleSubtitleBatches(batches.slice(1), (bu, i) => _runBatch(bu, i + 1));
               settled.forEach((r, i) => {
                 if (r.status === 'rejected') {
                   SK.sendLog('error', 'youtube', `batch ${i + 1} failed`, {
@@ -3787,29 +3946,28 @@
       }
     }
 
-    // v1.2.46/v1.2.48: 記錄此視窗已翻完
-    YT.captionMapCoverageUpToMs = Math.max(YT.captionMapCoverageUpToMs, windowEndMs);
-    // v1.9.22: 只有「真的有譯文進帳」或「視窗本來就沒字幕」才加 translatedWindows。
-    // 全 batches 失敗時不加,下次 seek 此視窗會重跑翻譯(避免「靜默空白」bug)。
-    const _windowProducedTranslation =
-      YT.captionMap.size > _cmSizeBefore ||
-      YT.displayCues.length > _cuesCountBefore;
-    // v1.10.46: 世代比對——in-flight 期間來源已切換的批次不得標 translatedWindows
-    if (_myCaptionGen !== (YT.captionSourceGen || 0)) {
-      SK.sendLog('info', 'youtube', 'window finished after caption source switch — not marking translated', {
-        windowStartMs, gen: _myCaptionGen, currentGen: YT.captionSourceGen,
-      });
-    } else if (windowSegs.length === 0 || _okBatchCount > 0 || _windowProducedTranslation) {
-      YT.translatedWindows.add(windowStartMs); // Set 精確記錄,供 seek-back 跳過判斷用
-    } else {
-      // v2.0.54:視窗沒產出 → 釋放本視窗取走的片段,retry 時重新收集(含尾端延伸)。
-      // 不釋放的話片段永遠掛在 asrSegConsumed,重試視窗收不到片段 → 永久空白。
-      if (_myConsumedSet) windowSegs.forEach(s => _myConsumedSet.delete(s.startMs));
-      SK.sendLog('warn', 'youtube', 'window translation produced nothing — leaving open for retry', {
-        windowStartMs, segCount: windowSegs.length, okBatchCount: _okBatchCount,
-        captionMapSize: YT.captionMap.size,
-        displayCuesLen: YT.displayCues.length,
-      });
+    // v1.10.46: 世代比對——in-flight 期間來源已切換(或 v2.5.1 起清過快取)的批次
+    // 不得標 translatedWindows,也不得抬高 coverage 高水位(v2.5.1:原本 coverage 寫在
+    // 世代比對之前,清快取 reset 歸零後又被 in-flight 視窗寫回)。
+    const _genStale = _myCaptionGen !== (YT.captionSourceGen || 0);
+    if (!_genStale) {
+      const complete = windowSegs.every(seg => completedSegs.has(seg));
+      if (complete) {
+        YT.captionMapCoverageUpToMs = Math.max(YT.captionMapCoverageUpToMs, windowEndMs);
+        YT.translatedWindows.add(windowStartMs);
+      } else {
+        // 只釋放未翻到的片段；已完成子批保留，seek/retry 可補齊缺口。
+        if (_myConsumedSet) windowSegs.forEach(seg => {
+          if (!completedSegs.has(seg)) {
+            _myConsumedSet.delete(seg.startMs);
+            // 尾端延伸可能跨到另一個已被空視窗標記完成的區間，一併解除。
+            YT.translatedWindows.delete(Math.floor(seg.startMs / windowSizeMs) * windowSizeMs);
+          }
+        });
+        SK.sendLog('warn', 'youtube', 'window has untranslated segments — leaving open for retry', {
+          windowStartMs, total: windowSegs.length, completed: completedSegs.size,
+        });
+      }
     }
 
     // v1.2.45: 過期視窗追趕機制——API 完成時若 video 已超過 translatedUpToMs（window end），
@@ -4172,6 +4330,11 @@
   SK.YT._resetTranslationStateForCacheClear = function _resetTranslationStateForCacheClear() {
     const YT = SK.YT;
     if (!YT) return;
+    // v2.5.1:清快取也 bump 世代——清當下 in-flight 的視窗批次是「清之前」的翻譯(可能部分
+    // 來自已清掉的快取命中),完成後不得回頭標 translatedWindows / 抬高 coverage 高水位,
+    // 否則清快取後那個視窗被當「已翻完」跳過,永遠不重翻(spec 內實測 race:reset 後
+    // coverage 又被 in-flight 視窗寫回 30000)。與 _resetCaptionSourceBookkeeping 同機制。
+    YT.captionSourceGen          = (YT.captionSourceGen || 0) + 1;
     YT.captionMap                = new Map();
     YT.translatedWindows         = new Set();
     YT.displayCues               = [];
@@ -4241,10 +4404,7 @@
     try {
       // 依 ytSubtitle.engine 路由(on-the-fly 用人工字幕資料，跟非 ASR 字幕同性質)
       const _onTheFlyMsgType = SK.getSubtitleBatchType(YT.config?.engine, false);
-      const res = await SK.safeSendMessage({
-        type: _onTheFlyMsgType,
-        payload: { texts, glossary: null },
-      });
+      const res = await _translateSubtitleTexts(texts, _onTheFlyMsgType, _myGen);
       if (!res?.ok) throw new Error(SK.i18n.bgErrorMessage(res) || SK.t('common.errorUnknown'));
       // v1.8.20: await 後再次檢查 active——stop 在 await 期間發生時放棄寫入，
       // 否則寫進已被 stopYouTubeTranslation 重置的新 captionMap 污染下個 session。
@@ -4261,7 +4421,8 @@
       for (let i = 0; i < texts.length; i++) {
         const key = texts[i];
         // v1.8.10 A:strip LLM 偷懶殘留的 SEP / «N» 標記
-        const trans = SK.sanitizeMarkers(results[i] || texts[i]);
+        const trans = results[i];
+        if (trans == null) continue;
         YT.captionMap.set(key, trans);
         const isBilingual = YT.config?.bilingualMode === true;
         for (const el of (queue.get(key) || [])) {
@@ -4460,6 +4621,7 @@
       YT._ccButtonObserver = null;
     }
     _clearMwebCcRetry(); // mweb auto-CC 重試排程一併停掉
+    _clearPopupDefer();  // issue #68：等 popup 收起的延後重載一併停掉
     _setCcPausedHidingMode(false);
     _setAsrHidingMode(false);
     _removeOverlay();
@@ -4541,6 +4703,7 @@
     YT._firstCacheHitLogged      = false;     // v1.2.51
     YT._autoCcToggled            = false;     // v1.6.20 A 路徑:每次啟動翻譯重置 auto-CC 旗標
     _clearMwebCcRetry();                      // mweb auto-CC 重試計數 / 排程歸零(新影片重新計)
+    _clearPopupDefer();                       // issue #68：popup 延後重載歸零
     YT._errorNotified            = false;
     YT.ccPaused                  = false;     // attachVideoListener → _observeCcButton 會依 CC 實際狀態重設
     YT.displayCues               = [];        // G 路徑:啟動時清空 overlay cue,等本影片字幕回來
@@ -4837,10 +5000,16 @@
       // 全量合併風險低;in-flight 批次沿用舊值屬可接受)。bilingualMode 是
       // displayMode 導出值,不吃 ytSubtitle(殘留 key 忽略),沿用當前值。
       if (SK.YT.config) {
-        SK.YT.config = { ...DEFAULT_YT_CONFIG, ...newVal, bilingualMode: SK.YT.config.bilingualMode === true };
+        SK.YT.config = { ...DEFAULT_YT_CONFIG, ...newVal, localModel: SK.YT.config.localModel, targetLanguage: SK.YT.config.targetLanguage, bilingualMode: SK.YT.config.bilingualMode === true };
       }
       // 字幕字級 scale:設定變更即時套用(overlay --sk-cue-size + iOS ::cue)
       if ('captionScale' in newVal) _applyYtCaptionScale(newVal.captionScale);
+    }
+    if (changes.targetLanguage && SK.YT.config) {
+      SK.YT.config.targetLanguage = changes.targetLanguage.newValue;
+    }
+    if (changes.customProvider && SK.YT.config) {
+      SK.YT.config.localModel = _isLocalSubtitleProvider(changes.customProvider.newValue);
     }
     if (changes.displayMode) {
       const newBilingual = changes.displayMode.newValue === 'dual';

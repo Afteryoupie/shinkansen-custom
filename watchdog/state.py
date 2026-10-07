@@ -18,6 +18,7 @@ class State:
         self.current_model: Optional[Dict[str, Any]] = None
         self.models: List[Dict[str, Any]] = []
         self.lock: Optional[asyncio.Lock] = None
+        self.request_lock: Optional[asyncio.Lock] = None
         self.stop_event: Optional[asyncio.Event] = None
         self.should_exit: bool = False
         self.auto_sleep_enabled: bool = True

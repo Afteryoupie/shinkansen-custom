@@ -460,7 +460,8 @@ body.runtime-firefox .intro-desktop {
 body.runtime-safari .intro-safari {
   display: block;
 }
-/* iOS build 四指 tap 專屬說明（SPEC-PRIVATE §26）：預設隱藏，只在
+/* iOS build 多指 tap 專屬內容（SPEC-PRIVATE §26）：快速鍵 section 的手勢說明段落 +
+   「觸控手勢翻譯」設定 section（#touch-gesture-section）。預設隱藏，只在
    body.runtime-ios-touch（真觸控裝置，options.js 依 isTouchScreenDevice() 加）
    顯示。平台屬性 → iOS build 跑在 macOS（無觸控）時不顯示，尊重 macOS 特性
    （見 lib/platform.js）；intro-safari 的 ⌃ Control 說明照常顯示。 */
@@ -1258,6 +1259,10 @@ shinkansen-translation[data-sk-accent="custom"][data-sk-mark="dashed"] { text-de
 /* v1.8.52: 強調色 swatch row + 自訂 hex
    active 樣式用 2px ring(box-shadow，不疊在色塊裡)— CLAUDE.md UI 指引
    要求 WYSIWYG 按鈕群 active 不填色,色塊本身就是預覽。 */
+/* 懸停翻譯：修飾鍵 + 顯示模式兩顆 picker 並排（label 各佔一半，寬度對齊） */
+.hover-translate-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.hover-translate-row > label { flex: 1 1 220px; margin: 12px 0 4px; }
+.hover-translate-row > label > select { width: 100%; }
 .dual-accent-row {
   display: flex;
   flex-wrap: wrap;

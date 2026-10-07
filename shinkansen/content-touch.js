@@ -1,6 +1,10 @@
-// content-touch.js — 四指手勢觸發翻譯（iOS / iPadOS Safari 專用）
+// content-touch.js — 多指手勢觸發翻譯（iOS / iPadOS Safari 專用；三指或四指，預設四指）
 //
 // 設計（SPEC-PRIVATE §26.1）：
+// - 指數由 storage.sync.touchGestureFingers 決定（3 或 4，預設 4；issue #72 使用者反映
+//   iPhone 上四指難按，改成可選三指——姊妹專案 JRead 的三指輕點在真機驗證可行：
+//   快速輕點在 iOS 系統三指手勢（復原 / 複製列，約按住 1 秒才出現）介入前即完成，
+//   系統接管時送 touchcancel 由本檔取消候選）。以下註解的「四指」泛指「設定的指數」
 // - 四指「快點」= Alt+S 完整 toggle（主要預設 slot 2）：未翻譯 → 翻譯；翻譯中或
 //   已翻譯 → 中止並還原原文。送 FOUR_FINGER_TAP 給 background → TRANSLATE_PRESET
 //   slot 2（跟 commands onCommand 的 Alt+S 完全同一條路徑，含 all_frames broadcast）
@@ -42,17 +46,31 @@
   // 初始值必須與 lib/storage.js DEFAULT_SETTINGS.fourFingerGesture 同值（此處直接讀
   // storage.sync，沒 key 時不會經過 DEFAULT_SETTINGS merge）。
   let fourFingerEnabled = true;
-  browser.storage.sync.get(['fourFingerGesture']).then((s) => {
+  // 指數（3 | 4）。初始值必須與 lib/storage.js DEFAULT_SETTINGS.touchGestureFingers 同值；
+  // 只接受 3 或 4，其他值（舊資料 / 匯入壞值）一律回 4
+  const DEFAULT_FINGERS = 4;
+  const normalizeFingers = (v) => (v === 3 || v === 4) ? v : DEFAULT_FINGERS;
+  let fingerCount = DEFAULT_FINGERS;
+  browser.storage.sync.get(['fourFingerGesture', 'touchGestureFingers']).then((s) => {
     if (typeof s.fourFingerGesture === 'boolean') fourFingerEnabled = s.fourFingerGesture;
+    fingerCount = normalizeFingers(s.touchGestureFingers);
   }).catch(() => {});
   browser.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && changes.fourFingerGesture) {
+    if (area !== 'sync') return;
+    if (changes.fourFingerGesture) {
       // key 被移除(newValue undefined)= 回預設開;只有明確 boolean 才尊重使用者值
       const nv = changes.fourFingerGesture.newValue;
       fourFingerEnabled = (typeof nv === 'boolean') ? nv : true;
     }
+    if (changes.touchGestureFingers) {
+      fingerCount = normalizeFingers(changes.touchGestureFingers.newValue);
+      // 指數切換當下若有進行中的候選手勢，判定基準已變，直接作廢
+      clearGestureTimer();
+      gesture = null;
+    }
   });
   SK.getFourFingerEnabled = () => fourFingerEnabled;   // regression spec 讀取用
+  SK.getTouchGestureFingers = () => fingerCount;       // regression spec 讀取用
 
   function isEnabled() {
     // IS_IOS_BUILD 由 lib/distribution-cs.js 寫入（iOS build override 為 true）。
@@ -63,7 +81,7 @@
 
   window.addEventListener('touchstart', (e) => {
     if (!isEnabled()) return;
-    if (e.touches.length === 4) {
+    if (e.touches.length === fingerCount) {
       const pts = new Map();
       for (const t of e.touches) pts.set(t.identifier, { x: t.clientX, y: t.clientY });
       clearGestureTimer();
@@ -74,11 +92,12 @@
         if (!gesture || gesture.longPressFired) return;
         gesture.longPressFired = true;
         gesture.timer = null;
-        SK.sendLog('info', 'system', 'four-finger long-press detected', { ms: LONGPRESS_MS });
+        SK.sendLog('info', 'system', 'multi-finger long-press detected', { fingers: fingerCount, ms: LONGPRESS_MS });
         SK.safeSendMessage({ type: 'FOUR_FINGER_LONGPRESS' }).catch(() => {});
       }, LONGPRESS_MS);
-    } else if (e.touches.length > 4) {
-      // 第五指落下 → 不是四指手勢（iPadOS 五指 pinch 等系統手勢）
+    } else if (e.touches.length > fingerCount) {
+      // 多一指落下 → 不是設定指數的手勢（四指設定下的五指 pinch 等系統手勢；三指設定下
+      // 的第四指同樣取消，讓三指 / 四指語意互斥）
       clearGestureTimer();
       gesture = null;
     }
@@ -105,7 +124,7 @@
       // e.touches 已不含剛抬起的指頭,四指手勢任一 touchend 必然 < 4 → 第一根
       // 抬起即取消。先前這裡直接 return 不清 timer:抬三指剩一指壓超過 600ms,
       // 計時器照樣觸發 FOUR_FINGER_LONGPRESS 誤發 slot 1(2026-08-03 review D2)
-      if (e.touches.length < 4) clearGestureTimer();
+      if (e.touches.length < fingerCount) clearGestureTimer();
       return; // 還有指頭沒抬起，等下一個 touchend
     }
     clearGestureTimer();
@@ -114,7 +133,7 @@
     gesture = null;
     if (fired) return;                    // 長按已由計時器送出 slot 1，抬起不再送 slot 2
     if (elapsed >= LONGPRESS_MS) return;  // 理論上計時器已先觸發；防禦性早退
-    SK.sendLog('info', 'system', 'four-finger tap detected', { elapsedMs: elapsed });
+    SK.sendLog('info', 'system', 'multi-finger tap detected', { fingers: fingerCount, elapsedMs: elapsed });
     SK.safeSendMessage({ type: 'FOUR_FINGER_TAP' }).catch(() => {});
   }, { passive: true, capture: true });
 

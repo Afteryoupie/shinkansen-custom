@@ -217,6 +217,25 @@
   const _CJK_RE = /[一-鿿㐀-䶿぀-ゟ゠-ヿ가-힯]/;
   function _buttonThreshold(text) { return _CJK_RE.test(text) ? 3 : 8; }
 
+  // root 內是否有「明眼使用者看得到」的文字：任一非空 text node，其到 root 之間的祖先
+  // 全部可見（SK.isVisible：display:none / visibility:hidden / sr-only 1×1 裁切都算不可見）。
+  // root 自身的可見性由呼叫端另行檢查
+  function _hasVisibleText(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = walker.nextNode())) {
+      if (!n.nodeValue || !n.nodeValue.trim()) continue;
+      let p = n.parentElement;
+      let hidden = false;
+      while (p && p !== root) {
+        if (!SK.isVisible(p)) { hidden = true; break; }
+        p = p.parentElement;
+      }
+      if (!hidden) return true;
+    }
+    return false;
+  }
+
   // 讀 element 自身或最近 ancestor 的 lang attribute,return lowercase or null。
   // 用於 isCandidateText 對社群網站(Twitter / Reddit / Threads / Mastodon / Discord web)的
   // lang attribute 信號優先於純文字 detect — short text(< 30 cjk)時 SIMP 集合命中率
@@ -1688,6 +1707,16 @@
         if (stats) stats.longTextButtonLeaf = (stats.longTextButtonLeaf || 0) + 1;
       }
       if (!added) {
+        // 退回「整顆按鈕當 unit」只適用於按鈕自己有看得到的文字（文字直接放在 BUTTON 內、
+        // 或 leaf 因長度 / 不翻譯標記被跳過）。純圖示按鈕的唯一文字是 sr-only / visually-hidden
+        // 標籤（`<button><span class="icon"></span><span class="sr-only">展開章節</span></button>`）時，
+        // leaf 已因不可見被跳過，再退回整顆按鈕 = clean-slate 注入把圖示清掉、隱藏標籤的
+        // wrapper 也沒了，譯文直接露在固定寬高的圖示按鈕裡（目錄展開鈕變成擠在一起的直排字）。
+        // 明眼使用者看不到的文字不翻：整顆跳過
+        if (!_hasVisibleText(btn)) {
+          if (stats) stats.buttonNoVisibleText = (stats.buttonNoVisibleText || 0) + 1;
+          return;
+        }
         results.push({ kind: 'element', el: btn });
         seen.add(btn);
         if (stats) stats.longTextButtonDirect = (stats.longTextButtonDirect || 0) + 1;

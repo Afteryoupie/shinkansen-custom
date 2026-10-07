@@ -161,6 +161,7 @@ export const DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT = `你是專業的{sourceLanguag
 </task>
 
 <output_format>
+零標點規則只適用於「|」後的譯文；編號、範圍的「-」與分隔符「|」必須保留。
 逐行輸出，每行格式「起始編號-結束編號|中文譯文」，代表該句涵蓋輸入的哪一段連續片段；只涵蓋一個片段時寫「編號|中文譯文」。
 - 編號必須來自輸入，各行範圍依序遞增、不可重疊、不可跳過任何片段（所有輸入片段都要被某一行涵蓋）
 - 每行只有一句譯文，譯文內不可出現換行
@@ -407,6 +408,7 @@ Example:
 </task>
 
 <output_format>
+The zero-punctuation rule applies only to the translation after "|"; preserve the numeric range, "-" and "|".
 Output one line per sentence in the form "startIndex-endIndex|translation", where the range is the run of consecutive input fragments that sentence covers; use "index|translation" when a sentence covers a single fragment.
 - Indexes must come from the input; ranges must be in increasing order, must not overlap, and must not skip any fragment (every input fragment must be covered by some line)
 - Exactly one sentence per line; no line breaks inside a translation
@@ -866,6 +868,16 @@ export const DEFAULT_SETTINGS = {
   // content-touch.js isEnabled() 額外 gate 此旗標；桌面 build 無此手勢，旗標無作用。
   // 讀取端 content-touch.js 的初始值必須同值（該處不走 DEFAULT_SETTINGS merge）。
   fourFingerGesture: true,
+  // 多指手勢的指數：3 或 4（issue #72：iPhone 上四指難按，開放三指）。預設 4 維持既有
+  // 使用者行為不變。content-touch.js 只接受 3 / 4，其他值回 4；options 以「關閉 / 三指 /
+  // 四指」單一 picker 同時寫 fourFingerGesture（enable）與本值。
+  touchGestureFingers: 4,
+  // 懸停翻譯（issue #67）：按住修飾鍵把游標停在段落上即翻該段。'off' | 'shift' | 'alt' | 'ctrl'，
+  // 預設關閉（新入口，使用者自選才開）。content-hover.js 的初始值必須同值（該處不走 merge）。
+  hoverTranslateModifier: 'off',
+  // 懸停翻譯的顯示方式：'single' | 'dual'，獨立於整頁 displayMode。預設雙語（懸停情境是
+  // 「邊讀原文邊看譯文」，2026-09-30 Jimmy 指定）。content-hover.js 初始值必須同值。
+  hoverTranslateMode: 'dual',
   // v1.6.13: 自動翻譯網站（白名單）觸發時要用哪一組 preset。預設 slot 2 = Flash。
   // 修法前自動翻譯路徑直接 SK.translatePage() 不帶 slot,fallback 全域 geminiConfig.model;
   // 使用者改 preset model 後 Alt+S 走新 model，但白名單路徑仍走全域 → UX 不一致。

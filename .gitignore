@@ -101,6 +101,7 @@ Models/
 *.bin
 *.safetensors
 watchdog/LLMMenuBar
+backends/
 LLMMenuBar
 
 # Scripts 評測暫存與測試產物

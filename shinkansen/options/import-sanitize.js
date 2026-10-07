@@ -43,7 +43,10 @@ export function sanitizeImport(raw, _t, SC = globalThis.__SKShortcuts) {
     floatingIconSize:    { type: 'number', oneOf: [16, 24, 32] }, // icon 邊長 px（16 小 / 24 中 / 32 大）
     floatingIconOpacity: { type: 'number', min: 0.1, max: 1 },
     floatingIconPos:     { type: 'object' }, // { edge, offsetY }，content script 拖移後寫入
-    fourFingerGesture:   { type: 'boolean' }, // 四指觸控手勢 enable（iOS）
+    fourFingerGesture:   { type: 'boolean' }, // 多指觸控手勢 enable（iOS）
+    touchGestureFingers: { type: 'number', oneOf: [3, 4] }, // 多指觸控手勢指數（iOS；issue #72）
+    hoverTranslateModifier: { type: 'string', oneOf: ['off', 'shift', 'alt', 'ctrl'] }, // 懸停翻譯修飾鍵（issue #67）
+    hoverTranslateMode:     { type: 'string', oneOf: ['single', 'dual'] }, // 懸停翻譯顯示方式（獨立於整頁 displayMode）
     iosPromoDismissed:   { type: 'boolean' }, // popup iOS 上架提示已關閉
     // issue #48 fix：之前漏列導致匯入時這些 key 默默丟掉
     targetLanguage:      { type: 'string', oneOf: TARGET_LANGUAGES },

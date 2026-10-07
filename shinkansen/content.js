@@ -565,6 +565,27 @@
     return jobs;
   }
 
+  // ─── 翻譯前的顯示設定注入（Gemini / Google 整頁路徑與懸停翻譯共用）─────────
+  // 目標語言（content-detect.js isCandidateText 走 target-aware）、顯示模式（single / dual，
+  // 寫進 STATE.translatedMode 鎖定本輪）、雙語標記樣式與強調色、dual wrapper CSS。
+  // 同一份事實三條路徑各寫一份會 drift（工作流原則 §5），收斂於此。回傳 target language。
+  SK.applyTranslateDisplaySettings = function applyTranslateDisplaySettings(settings) {
+    settings = settings || {};
+    const TARGET = (typeof settings.targetLanguage === 'string' && ['zh-TW','zh-CN','en','ja','ko','es','fr','de'].includes(settings.targetLanguage))
+      ? settings.targetLanguage : 'zh-TW';
+    STATE.targetLanguage = TARGET;
+    const mode = settings.displayMode;
+    STATE.translatedMode = (mode === 'dual') ? 'dual' : 'single';
+    // 雙語視覺標記樣式
+    const ms = settings.translationMarkStyle;
+    SK.currentMarkStyle = (ms && SK.VALID_MARK_STYLES.has(ms)) ? ms : SK.DEFAULT_MARK_STYLE;
+    // v1.8.52: 強調色（token / hex / 'auto'），sanitize 後給 injectDual 套到 wrapper
+    SK.currentDualAccent = SK.sanitizeDualAccent?.(settings.dualAccentColor) ?? 'auto';
+    // 雙語模式才注入 wrapper CSS（單語模式不需要）
+    if (STATE.translatedMode === 'dual') SK.ensureDualWrapperStyle?.();
+    return TARGET;
+  };
+
   // ─── translateUnits ──────────────────────────────────
 
   SK.translateUnits = async function translateUnits(units, { onProgress, glossary, signal, modelOverride, engine, ignorePartialMode, convertDirection, convertOnly } = {}) {
@@ -1269,6 +1290,9 @@
       statePartialModeActive: STATE.partialModeActive,
       alreadyMarkedCount: document.querySelectorAll('[data-shinkansen-translated]').length,
     });
+    // 在「只被本地轉換」的頁面上往下開整頁翻譯時設 true：這一輪若一段都沒翻成（全數批次
+    // 失敗 / throw），頁面仍是轉換完成的狀態，要把 STATE.translated 標回去（見 markConvertedAgain）
+    let resumeConvertedOnFail = false;
     // v1.8.7: options.ignorePartialMode = true 從「翻譯剩餘段落」按鈕觸發，
     // 不走 restorePage 早退，直接重翻整頁（前面已翻好的段落會從 cache fast path 命中）
     if (STATE.translated && !options.ignorePartialMode) {
@@ -1284,11 +1308,15 @@
       // 例如英文條目的資訊框有幾段簡體），使用者按翻譯的意圖是「翻這頁的外語內容」，
       // 不是還原那幾段轉換——舊行為第一下變成 toggle 還原、整頁英文不翻、要按第二次
       // （harness 實測 en.wikipedia 條目：資訊框 8 段轉換後 TRANSLATE 只還原了 8 段）。
-      // 仍有夠份量的未翻候選（已轉換段落帶 data-shinkansen-translated 不會被重收）→
-      // 視為未翻譯往下走整頁翻譯；沒有（整頁本來就是簡體）才維持 toggle 還原。
-      if (STATE.translatedBy === 'opencc-local' && SK.hasSubstantialUntranslated()) {
+      // 還有任何未翻候選（已轉換段落帶 data-shinkansen-translated 不會被重收）→
+      // 視為未翻譯往下走整頁翻譯；完全沒有（整頁本來就是簡體）才維持 toggle 還原。
+      // 2026-10-02：門檻由 200 字元降為「有任何候選」——自動轉換是背景行為，按翻譯一律
+      // 立刻翻譯。options.overConverted = handleTranslatePreset 已用同一判準
+      // （untranslatedPartialKind）判過，不重掃一次整頁
+      if (STATE.translatedBy === 'opencc-local' && (options.overConverted || SK.hasSubstantialUntranslated(1))) {
         SK.sendLog('info', 'translate', 'page only locally converted, proceed to full translate instead of toggle restore');
         STATE.translated = false;
+        resumeConvertedOnFail = true;
       } else {
         restorePage();
         return;
@@ -1351,6 +1379,8 @@
       // convertOnly 離線照常執行;手動翻譯維持離線提示
       if (!options.convertOnly) {
         SK.showToast('error', SK.t('toast.offline'), { autoHideMs: 5000 });
+        // 轉換頁上的翻譯沒開成：頁面仍是轉換完成狀態，把上方暫時放下的 flag 標回
+        if (resumeConvertedOnFail) STATE.translated = true;
         return;
       }
     }
@@ -1365,7 +1395,16 @@
     const myAbortController = new AbortController();
     STATE.abortController = myAbortController;
     const abortSignal = myAbortController.signal;
-    SK.safeSendMessage({ type: 'SET_BADGE_TRANSLATED' }).catch(() => {});
+    // icon badge 只代表「使用者主動觸發的翻譯」：背景簡繁自動轉換（convertOnly）不點亮
+    // 也不清除——不點亮是 2026-10-02 Jimmy 指定（自動轉換不該在工具列留標示）；不清除是
+    // 因為它從不擁有 badge，被手動翻譯擠掉後的收尾若還送 CLEAR 會清掉新一輪剛點亮的紅點
+    if (!options.convertOnly) SK.safeSendMessage({ type: 'SET_BADGE_TRANSLATED' }).catch(() => {});
+    const clearRunBadge = () => {
+      if (!options.convertOnly) SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
+    };
+    const markConvertedAgain = () => {
+      if (resumeConvertedOnFail) remarkConvertedPage(myAbortController);
+    };
 
     // v1.7.x instrumentation: 用 entryTime 量化 translatePage 各階段相對時間
     const entryTime = Date.now();
@@ -1378,9 +1417,8 @@
     SK.sendLog('info', 'translate', 'milestone:storage_loaded', { t: Date.now() - entryTime });
 
     // P1: 注入 STATE.targetLanguage(供 content-detect.js isCandidateText 走 target-aware)
-    const TARGET = (typeof settings.targetLanguage === 'string' && ['zh-TW','zh-CN','en','ja','ko','es','fr','de'].includes(settings.targetLanguage))
-      ? settings.targetLanguage : 'zh-TW';
-    STATE.targetLanguage = TARGET;
+    // + 顯示模式 / 雙語標記樣式（與 Google 路徑、懸停翻譯共用 SK.applyTranslateDisplaySettings）
+    const TARGET = SK.applyTranslateDisplaySettings(settings);
 
     // 簡繁本地轉換方向:target 為中文變體時,偵測為相反變體的段落走 OpenCC 本地
     // 轉換(translateUnits 內分流),其他 target 無方向可言 → null(全走 LLM)。
@@ -1391,7 +1429,6 @@
       // 防禦:toggle 開著但 target 已切到非中文(popup 會藏 toggle,這裡擋 race)
       SK.sendLog('info', 'translate', 'convertOnly: target not Chinese, skip', { target: TARGET });
       releaseRunState(myAbortController);
-      SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
       return;
     }
 
@@ -1405,19 +1442,8 @@
     // 對應移除:storage.skipTraditionalChinesePage / options.html#skipTraditionalChinesePage /
     // options.js _renderLangDetectLabels / i18n options.langDetect.* + toast.alreadyInTarget。
 
-    // v1.5.0: 讀顯示模式設定，寫進 STATE.translatedMode 鎖定本次翻譯用的模式。
-    // 同一頁中途切模式不會即時生效（避免半翻半改），需重新觸發翻譯。
-    {
-      const mode = settings.displayMode;
-      STATE.translatedMode = (mode === 'dual') ? 'dual' : 'single';
-      // 雙語視覺標記樣式
-      const ms = settings.translationMarkStyle;
-      SK.currentMarkStyle = (ms && SK.VALID_MARK_STYLES.has(ms)) ? ms : SK.DEFAULT_MARK_STYLE;
-      // v1.8.52: 強調色（token / hex / 'auto'），sanitize 後給 injectDual 套到 wrapper
-      SK.currentDualAccent = SK.sanitizeDualAccent?.(settings.dualAccentColor) ?? 'auto';
-      // 雙語模式才注入 wrapper CSS（單語模式不需要）
-      if (STATE.translatedMode === 'dual') SK.ensureDualWrapperStyle?.();
-    }
+    // v1.5.0: 顯示模式已在上方 SK.applyTranslateDisplaySettings 寫進 STATE.translatedMode
+    // 鎖定本次翻譯用的模式。同一頁中途切模式不會即時生效（避免半翻半改），需重新觸發翻譯。
 
     // v1.8.41：把 displayCurrency + 最新匯率灌進 SK.currencyState，讓 toast line2
     // 的 SK.formatMoney 知道用 USD 還是 TWD 顯示。匯率讀 storage.local.exchangeRate
@@ -1444,7 +1470,6 @@
     if (convertOnly && SK.pageHasConvertibleSignal && !SK.pageHasConvertibleSignal(convertDirection)) {
       SK.sendLog('info', 'translate', 'convertOnly: no source-variant chars on page, silent exit (precheck)', { direction: convertDirection });
       releaseRunState(myAbortController);
-      SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
       return;
     }
 
@@ -1460,7 +1485,8 @@
       } else {
         SK.sendLog('info', 'translate', 'convertOnly: no units at collect (page not rendered yet?), silent exit');
       }
-      SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {}); // run 開頭已 SET_BADGE，沒翻成不可留紅點
+      clearRunBadge(); // run 開頭已 SET_BADGE，沒翻成不可留紅點
+      markConvertedAgain();
       releaseRunState(myAbortController);
       return;
     }
@@ -1481,7 +1507,6 @@
       if (units.length === 0) {
         SK.sendLog('info', 'translate', 'convertOnly: no convertible units, silent exit');
         releaseRunState(myAbortController);
-        SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
         return;
       }
     }
@@ -1751,7 +1776,8 @@
       // 跳「已還原」要按兩次才重翻);sticky / rescan / SPA observer 會對注定失敗的
       // 頁面反覆重送 API;badge 紅點也不該亮著。
       if (done === 0 && failures.length > 0) {
-        SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
+        clearRunBadge();
+        markConvertedAgain();
         return;
       }
 
@@ -1760,7 +1786,6 @@
       // llmPickIdx 被 skip → done=0 落入成功路徑:translated=true 會讓 autoConvert
       // 不再重試、快速鍵要先按一次「還原」才能重翻,實際頁面一段都沒轉。
       if (convertOnly && done === 0) {
-        SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
         SK.sendLog('info', 'translate', 'convertOnly: done=0 (all skipped) — not marking translated');
         return;
       }
@@ -1928,7 +1953,8 @@
         SK.showToast('error', SK.t('toast.translateFailed', { error: err.message }), { stopTimer: true });
       }
       // run 開頭已 SET_BADGE；整輪 throw 且頁面未標 translated → 紅點不可殘留
-      if (!STATE.translated) SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
+      if (!STATE.translated) clearRunBadge();
+      if (!abortSignal.aborted) markConvertedAgain();
     } finally {
       _progressClosed = true;
       releaseRunState(myAbortController);
@@ -1995,6 +2021,7 @@
     STATE.originalLang?.clear?.();
     STATE.originalFontFamily?.clear?.();
     STATE.translationCache?.clear?.();  // v1.5.0
+    STATE.hoverTranslated = false;  // 懸停翻譯（content-hover.js）的段落一併還原，旗標歸零
     SK.restoreDocLang?.();  // v2.0.73：還原 <html lang> 原值
     // v2.0.85: Map 已全清,此時 DOM 上還掛注入痕跡的節點都是簿記追不到的無主殘留
     // (站點 clone / 換回舊節點),掃掉才不會讓 isPageTranslated() 永遠 true
@@ -2054,6 +2081,18 @@
       STATE.translating = false;
       STATE.translatingConvertOnly = false;
       STATE.abortController = null;
+    }
+  }
+
+  // 在「只被簡繁本地轉換」的頁面上開的整頁翻譯（translatePage / translatePageGoogle 的
+  // opencc-local 分支把 STATE.translated 暫時放下）一段都沒翻成時，頁面仍是轉換完成的狀態，
+  // 標回去（translatedBy / translationContext 該輪沒動過，仍是 opencc-local）。不標回的話
+  // DOM 有 marker 而 STATE.translated = false，下一次按翻譯又會先還原轉換。
+  // identity guard 同 releaseRunState；頁面已被還原（取消翻譯）時 marker 不在，不標
+  function remarkConvertedPage(myAC) {
+    if (STATE.abortController === myAC && !STATE.translated
+        && STATE.translatedBy === 'opencc-local' && SK.isPageTranslated()) {
+      STATE.translated = true;
     }
   }
 
@@ -2388,6 +2427,17 @@
       }
     }
 
+    // 頁面只被背景簡繁本地轉換標成已翻譯、且還有未翻候選 → 直接往下翻剩餘內容，已轉換段
+    // 不還原（同 translatePage 的 opencc-local 分支；overConverted = handleTranslatePreset
+    // 已判過）。這一輪若沒翻成，由 markConvertedAgain 把轉換完成狀態標回去
+    let resumeConvertedOnFail = false;
+    if (STATE.translated && STATE.translatedBy === 'opencc-local'
+        && (gtOptions.overConverted || SK.hasSubstantialUntranslated(1))) {
+      SK.sendLog('info', 'translate', 'page only locally converted, proceed to full translate instead of toggle restore (google)');
+      STATE.translated = false;
+      resumeConvertedOnFail = true;
+    }
+
     // 若 Gemini 翻譯已完成 → 先還原，再用 Google 翻
     if (STATE.translated) {
       restorePage();
@@ -2395,6 +2445,8 @@
 
     if (!navigator.onLine) {
       SK.showToast('error', SK.t('toast.offline'), { autoHideMs: 5000 });
+      // 轉換頁上的翻譯沒開成：頁面仍是轉換完成狀態，把上方暫時放下的 flag 標回
+      if (resumeConvertedOnFail) STATE.translated = true;
       return;
     }
 
@@ -2405,25 +2457,16 @@
     STATE.abortController = myAbortController;
     const abortSignal = myAbortController.signal;
     SK.safeSendMessage({ type: 'SET_BADGE_TRANSLATED' }).catch(() => {});
+    const markConvertedAgain = () => {
+      if (resumeConvertedOnFail) remarkConvertedPage(myAbortController);
+    };
 
     // 繁中偵測（與 Gemini 相同邏輯）
     let settings = {};
     try { settings = await browser.storage.sync.get(null); } catch (_) {}
-    // P1: 注入 STATE.targetLanguage(同 Gemini 路徑)
-    const TARGET = (typeof settings.targetLanguage === 'string' && ['zh-TW','zh-CN','en','ja','ko','es','fr','de'].includes(settings.targetLanguage))
-      ? settings.targetLanguage : 'zh-TW';
-    STATE.targetLanguage = TARGET;
+    // P1: 注入 STATE.targetLanguage + 顯示模式（同 Gemini 路徑，共用 helper）
+    SK.applyTranslateDisplaySettings(settings);
     // v1.9.26:整頁同 target skip 移除(同 Gemini 路徑,見上方註解)
-
-    // v1.5.0: 顯示模式（與 Gemini 路徑相同邏輯）
-    {
-      const mode = settings.displayMode;
-      STATE.translatedMode = (mode === 'dual') ? 'dual' : 'single';
-      const ms = settings.translationMarkStyle;
-      SK.currentMarkStyle = (ms && SK.VALID_MARK_STYLES.has(ms)) ? ms : SK.DEFAULT_MARK_STYLE;
-      SK.currentDualAccent = SK.sanitizeDualAccent?.(settings.dualAccentColor) ?? 'auto';
-      if (STATE.translatedMode === 'dual') SK.ensureDualWrapperStyle?.();
-    }
 
     const translateStartTime = Date.now();
 
@@ -2434,6 +2477,7 @@
     if (units.length === 0) {
       SK.showToast('error', SK.t('toast.noContent'), { autoHideMs: 3000 });
       SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {}); // 同 Gemini 路徑
+      markConvertedAgain();
       releaseRunState(myAbortController);
       return;
     }
@@ -2502,6 +2546,7 @@
       // 全數批次失敗 → 不標 translated / 不 sticky / 不 rescan(同 Gemini 路徑)
       if (done === 0 && failures.length > 0) {
         SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
+        markConvertedAgain();
         return;
       }
 
@@ -2549,6 +2594,7 @@
         SK.showToast('error', SK.t('toast.translateFailed', { error: err.message }), { stopTimer: true });
       }
       if (!STATE.translated) SK.safeSendMessage({ type: 'CLEAR_BADGE' }).catch(() => {});
+      if (!abortSignal.aborted) markConvertedAgain();
     } finally {
       _progressClosed = true;
       releaseRunState(myAbortController);
@@ -2794,6 +2840,24 @@
 
   // ─── 訊息接收 ────────────────────────────────────────
 
+  // 頁面有注入痕跡、但只是「部分段落」被處理過（背景簡繁自動轉換 / 懸停翻譯）且還有未翻
+  // 內容時，下一次翻譯觸發應該「直接往下翻」而不是 toggle 還原。回傳原因（'converted' |
+  // 'hover'）；回 null = 照常 toggle 還原。handleTranslatePreset（快速鍵 / 工具列按鈕 /
+  // 懸浮按鈕的共同入口）與 popup 的 GET_STATE（按鈕顯示「翻譯本頁」或「顯示原文」）共用——
+  // 同一份事實的單一判準，兩邊分開寫會 drift 成「按鈕寫顯示原文、按下去卻是翻譯」。
+  //   - converted：只被簡繁本地轉換（translatedBy 'opencc-local'）且還有任何未翻候選。
+  //     自動轉換是背景行為，使用者按翻譯一律立刻翻譯；完全沒有可翻內容才還原
+  //   - hover：只被懸停翻譯過幾段、整頁未翻，且剩餘未翻內容夠份量（門檻見 content-ns.js）
+  function untranslatedPartialKind() {
+    if (STATE.translated && STATE.translatedBy === 'opencc-local') {
+      return SK.hasSubstantialUntranslated(1) ? 'converted' : null;
+    }
+    if (!STATE.translated && STATE.hoverTranslated) {
+      return SK.hasSubstantialUntranslated() ? 'hover' : null;
+    }
+    return null;
+  }
+
   // v1.4.12: 依 preset slot 觸發對應 engine + model 翻譯。
   // 行為：閒置 → 啟動對應 preset；翻譯中 → abort；已翻譯 → restorePage（任一 slot）。
   async function handleTranslatePreset(slot, opts = {}) {
@@ -2833,9 +2897,25 @@
     //   - 一般入口：任意 preset 觸發皆還原（toggle）
     //   - force（長按選單選引擎）：先還原既有譯文，再 fall through 用新 preset 重新翻譯，
     //     避免在已注入的譯文上再疊一層；換引擎=重譯，不是 toggle 回原文。
+    let overConverted = false;
     if (SK.isPageTranslated()) {
-      restorePage();
-      if (!force) return;
+      // 懸停翻譯（content-hover.js）只翻過幾段、或背景簡繁自動轉換只轉過簡體段：使用者按
+      // 快速鍵的意圖是「翻這頁剩下的內容」，不是還原那幾段（判準見 untranslatedPartialKind）。
+      // 已標記的段落偵測層不會重收，整頁翻譯自然只補剩餘；之後再按才還原（懸停 / 轉換段落的
+      // 還原簿記與整頁同一份 STATE.originalHTML）。
+      // 2026-10-02：自動轉換過的頁面原本在這裡就被 DOM marker 判成「已翻譯 → 還原」，
+      // translatePage 內的 opencc-local 分支從快速鍵走不到，第一下永遠是還原、第二下才翻譯。
+      // force（懸浮按鈕長按選引擎）在轉換頁上同樣直接翻：本地轉換與引擎無關，不需先還原。
+      const partial = untranslatedPartialKind();
+      if (partial === 'converted') {
+        overConverted = true;
+        SK.sendLog('info', 'translate', 'page only locally converted, proceed to full translate instead of toggle restore (preset)');
+      } else if (partial === 'hover' && !force) {
+        SK.sendLog('info', 'translate', 'page only hover-translated, proceed to full translate instead of toggle restore');
+      } else {
+        restorePage();
+        if (!force) return;
+      }
     }
     // 閒置：讀 preset 定義。若 storage 還沒寫入（例如從 v1.4.11 升級第一次按快捷鍵）
     // 就 fallback 到 SK.DEFAULT_PRESETS，避免「按鍵無反應」。
@@ -2852,13 +2932,13 @@
       return;
     }
     if (preset.engine === 'google') {
-      SK.translatePageGoogle({ slot, label: preset.label || null });
+      SK.translatePageGoogle({ slot, label: preset.label || null, overConverted });
     } else if (preset.engine === 'openai-compat') {
       // v1.5.7: 自訂 OpenAI-compatible Provider。model / baseUrl / API Key 全部從
       // settings.customProvider 拿（preset.model 略過），preset 只決定 engine + label。
-      SK.translatePage({ engine: 'openai-compat', slot, label: preset.label || null });
+      SK.translatePage({ engine: 'openai-compat', slot, label: preset.label || null, overConverted });
     } else {
-      SK.translatePage({ modelOverride: preset.model || null, slot, label: preset.label || null });
+      SK.translatePage({ modelOverride: preset.model || null, slot, label: preset.label || null, overConverted });
     }
   }
   // 掛到 SK 讓 content-spa.js（SPA 導航續翻）也能呼叫
@@ -2887,14 +2967,14 @@
     if (msg?.type === 'GET_STATE') {
       // v1.10.57: popup / icon 顯示狀態以 DOM 注入痕跡為準,不信記憶體 STATE.translated
       // (SPA 子頁導航殘留 marker 時 STATE.translated 會說謊)。
-      const isTranslated = SK.isPageTranslated();
-      const isZhConverted = isTranslated && (STATE.translatedBy === 'opencc-local');
+      // translated = 「下一次按翻譯是還原」：與 handleTranslatePreset 同一判準——頁面只被
+      // 簡繁自動轉換 / 懸停翻譯處理過且還有未翻內容時，下一下是翻譯，按鈕不該顯示「顯示原文」。
+      // injected = DOM 有注入痕跡（供「編輯譯文」按鈕判斷，轉換 / 懸停的段落一樣可編輯）
+      const injected = SK.isPageTranslated();
       sendResponse({
         ok: true,
-        translated: isTranslated,
-        translatedBy: STATE.translatedBy || null,
-        translating: !!STATE.translating,
-        isZhConverted: isZhConverted,
+        translated: injected && !untranslatedPartialKind(),
+        injected,
         editing: editModeActive,
       });
       return true;
