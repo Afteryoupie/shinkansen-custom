@@ -1,0 +1,13 @@
+diff --git a/Sources/AppleIntelligenceApi/configure.swift b/Sources/AppleIntelligenceApi/configure.swift
+index fc97da8..47b3c88 100644
+--- a/Sources/AppleIntelligenceApi/configure.swift
++++ b/Sources/AppleIntelligenceApi/configure.swift
+@@ -28,6 +28,8 @@ public func configure(_ app: Application) async throws {
+     let cors = CORSMiddleware(configuration: corsConfiguration)
+     app.middleware.use(cors, at: .beginning)
+     
++    app.routes.defaultMaxBodySize = "1mb"
++
+     // register routes
+     try routes(app)
+ }
