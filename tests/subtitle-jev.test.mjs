@@ -251,4 +251,20 @@ test('Production hint objects preserve native selection unless English preferenc
   assert.equal(SK._chooseBestCaptionTrack(tracks, null, 'zh-TW', { preferEnglishAsr: true }).track.kind, 'asr');
   assert.equal(SK._chooseBestCaptionTrack(tracks, null, 'zh-TW', { preferEnglishAsr: false }).track.languageCode, 'zh-TW');
   assert.equal(SK._chooseBestCaptionTrack(tracks.slice(0, 2), null, 'zh-TW', { preferEnglishAsr: true }).track.languageCode, 'zh-TW');
+});test('Continuous two-second ASR fragments merge using speech end times', () => {
+  const raw = [
+    { text: 'When we started Mighty Car Mods we used', normText: 'a', startMs: 80, endMs: 4799 },
+    { text: 'a Datsu Seor as our project car which', normText: 'b', startMs: 2159, endMs: 7200 },
+    { text: 'on its release was the cheapest brand', normText: 'c', startMs: 4799, endMs: 9440 },
+    { text: 'new car you could buy in Australia.', normText: 'd', startMs: 7200, endMs: 11679 },
+  ];
+  const result = SK._heuristicMergeAsr(raw, 'en');
+  assert.ok(result.length < raw.length);
+  assert.equal(result.flatMap(s => s.sourceSegs).length, raw.length);
+  assert.equal(result.map(s => s.text).join(' '), raw.map(s => s.text).join(' '));
+});
+test('Real silence remains a boundary even with explicit speech durations', () => {
+  const raw = [{text:'we are talking',normText:'a',startMs:0,endMs:2000},
+    {text:'more words here',normText:'b',startMs:7000,endMs:9000}];
+  assert.equal(SK._heuristicMergeAsr(raw, 'en').length, 2);
 });

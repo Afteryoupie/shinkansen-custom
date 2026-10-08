@@ -649,15 +649,12 @@ async function applyJevSubtitleFilter(payload, settings, doTranslateFn) {
     return doTranslateFn(payload);
   }
 
-  const jev = new JevDecisionEngine({
-    enabled: yt.jevEnabled,
-    apiKey: yt.jevApiKey,
-    apiUrl: yt.jevApiUrl,
-  });
+  const jev = new JevDecisionEngine();
 
-  const texts = payload.texts;
-  const evaluated = await jev.evaluateBatch(texts, settings.targetLanguage);
-  const verdicts = texts.map((text, i) => evaluated?.[i] || jev.fallbackEvaluate(text, settings.targetLanguage));
+  const texts = payload.texts.map(text => text.replace(/\[(?:music|applause|laughter|silence|音楽|拍手|笑い|歓声)\]/gi, ' ').trim());
+  // 來源是播放器的真實字幕，遠端 noise 判斷不可刪除車型、人名或殘句。
+  // 字幕過濾只處理明確音效；Jev 的語意分句仍走 EVALUATE_YT_BOUNDARIES。
+  const verdicts = texts.map(text => jev.fallbackEvaluate(text, settings.targetLanguage));
 
   const needsTransIndices = [];
   const toTranslateTexts = [];
@@ -672,7 +669,7 @@ async function applyJevSubtitleFilter(payload, settings, doTranslateFn) {
 
   // 若全部都需要翻譯，直接走原翻譯邏輯
   if (needsTransIndices.length === texts.length) {
-    return doTranslateFn(payload);
+    return doTranslateFn({ ...payload, texts });
   }
 
   // 建立結果陣列
@@ -1061,11 +1058,10 @@ const messageHandlers = {
       // 2026-09-11 code review P1-2：原本把 yt.systemPrompt 原字串當 override 直接塞——
       // getSettings 對 ytSubtitle 深 merge，這個值永遠是非空的預設繁中字幕 prompt，
       // handleTranslateCustom 看到 override 就不再包 getEffective → targetLanguage = en / ja
-      // 的使用者用自訂 Provider 翻人工字幕全部變繁中。改跟 Gemini 字幕路徑（711 / 771）與
-      // ASR 自訂路徑對齊：依 target 選 UNIVERSAL / zh-TW 版，使用者客製 prompt 照常優先。
+      // 的使用者用自訂 Provider 翻人工字幕全部變繁中。雲端依 target 與使用者 prompt；
+      // 本地字幕採簡短指示，避免冗長 V22 prompt 與字幕分隔標記規則互相衝突。
       const local = isLocalSubtitleProvider(s.customProvider);
-      const isDefaultPrompt = !customPromptForKey(yt.systemPrompt, getEffectiveSubtitleSystemPrompt);
-      const overrides = { systemPrompt: local && isDefaultPrompt
+      const overrides = { systemPrompt: local
         ? localSubtitlePrompt(s.targetLanguage)
         : getEffectiveSubtitleSystemPrompt(s.targetLanguage, yt.systemPrompt) };
       // v1.5.8: 字幕路徑同 Gemini 字幕路徑，預設不套用固定術語表 / 黑名單

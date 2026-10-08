@@ -413,7 +413,12 @@
         ? _json3LineStarts(ev, lines.length, events[i + 1])
         : lines.map(() => ev.tStartMs || 0);
       lines.forEach((line, k) => {
-        segments.push({ text: line, normText: normText(line), startMs: lineStarts[k], groupId });
+        const segment = { text: line, normText: normText(line), startMs: lineStarts[k], groupId };
+        // ASR 的開始時間差包含語音時長，停頓必須扣除來源片段的持續時間。
+        if (perLineTiming && Number.isFinite(ev.dDurationMs) && ev.dDurationMs > 0) {
+          segment.endMs = k + 1 < lineStarts.length ? lineStarts[k + 1] : (ev.tStartMs || 0) + ev.dDurationMs;
+        }
+        segments.push(segment);
       });
     }
     segments.sort((a, b) => a.startMs - b.startMs);   // stable sort：同 startMs 保留原順序
@@ -847,7 +852,10 @@
       const words = clean.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || [];
       const greeting = /^(hello|hi|bye|goodbye|thanks|thank you|yes|no|yeah|okay)[.!?\s]*$/i.test(clean);
       // 品牌/縮寫可保留；一般英文句子與問候不可冒充完成的中文譯文。
-      if (!hasTarget && (greeting || (words.length >= 2 && words.some(w => /^[a-z]/.test(w))))) return null;
+      // ASR 車型／型號標籤可能含小寫詞（at1 mini dolphin seagull essential），不是未翻對話。
+      const identifierLabel = /\b[A-Za-z]+\d[A-Za-z0-9-]*\b/.test(String(source)) &&
+        words.length <= 8 && !/\b(?:i|you|we|they|he|she|it|is|are|was|were|have|has|will|would|can|could|should)\b/i.test(String(source));
+      if (!hasTarget && !identifierLabel && (greeting || (words.length >= 2 && words.some(w => /^[a-z]/.test(w))))) return null;
       if (/^zh/.test(target) && /[\u3040-\u30ff\uac00-\ud7af]/.test(clean) && clean === String(source).trim()) return null;
     }
     return typeof SK.stripSubtitlePunctuation === 'function' ? SK.stripSubtitlePunctuation(clean) : clean;
@@ -1285,7 +1293,8 @@
         // 行與行之間的時間差是推算值，不能拿來當「自然停頓」證據切句（維持舊行為：同 event 必同句）
         const prev = evs[i - 1];
         const sameEvent = c.groupId != null && prev && prev.groupId === c.groupId;
-        const m = sameEvent ? 0 : c.tStartMs - baseMs;
+        const previousEnd = Number.isFinite(prev?._src.endMs) ? prev._src.endMs : baseMs;
+        const m = sameEvent ? 0 : Math.max(0, c.tStartMs - previousEnd);
         const cTrim = c.utf8.trim().toLowerCase();
         if (cur.length && (c._src.jevBreakBefore === true ||
             (c._src.jevBreakBefore !== false && !sameEvent && sentenceEnds(prev.utf8)))) {
@@ -1324,7 +1333,7 @@
         const cur = result[result.length - 1];
         const last = groups[u][groups[u].length - 1];
         const nextFirst = groups[u + 1][0];
-        const gap = nextFirst.tStartMs - last.tStartMs;
+        const gap = Math.max(0, nextFirst.tStartMs - (Number.isFinite(last._src.endMs) ? last._src.endMs : last.tStartMs));
         const matched = nextFirst.utf8.match(startRe) || last.utf8.match(endRe);
         if (matched && !nextFirst.isBreak && gap <= _ASR_MIN_INTERVAL) {
           const mergedText = joinSegTexts([...cur, ...groups[u + 1]].map(e => e.utf8), lang);
@@ -1350,7 +1359,8 @@
         if (_countAsrUnits(joinSegTexts(o.map(e => e.utf8), lang), lang) > minWordLen) continue;
         if (_countAsrUnits(joinSegTexts([...s, ...o].map(e => e.utf8), lang), lang) >= sentenceMax) continue;
         if (sentenceEnds(s[s.length - 1].utf8)) continue;
-        if (o[0].tStartMs - s[s.length - 1].tStartMs > _ASR_MIN_INTERVAL) continue;
+        const last = s[s.length - 1];
+        if (o[0].tStartMs - (Number.isFinite(last._src.endMs) ? last._src.endMs : last.tStartMs) > _ASR_MIN_INTERVAL) continue;
         if (o[0].isBreak) continue;
         s.push(...o);
         out.splice(a, 1);
@@ -2028,6 +2038,7 @@
   // 由 player root 的 class 控制,讓 stop / SPA 移除 class 即可恢復原生顯示。
   // 用 class + 全域 style 而非 inline style:避免每個 caption-window 個別處理 mutation 競爭。
   const _ASR_PLAYER_CLASS = 'shinkansen-asr-active';
+  const _ASR_READY_PLAYER_CLASS = 'shinkansen-asr-ready';
   const _ASR_HIDE_CSS_ID  = 'shinkansen-asr-hide-css';
   // CC 關閉(ccPaused)期間隱藏所有字幕殘留:
   //   - non-ASR 走原生 .caption-window,YouTube 隱藏 CC 後 element 仍可能殘留中文 textContent
@@ -2058,9 +2069,9 @@
       .${_CC_PAUSED_PLAYER_CLASS} .ytp-caption-window-container {
         pointer-events: none !important;
       }
-      .${_ASR_PLAYER_CLASS} .caption-window,
-      .${_ASR_PLAYER_CLASS} .ytp-caption-window-rollup,
-      .${_ASR_PLAYER_CLASS} .ytp-caption-window-container .caption-window,
+      .${_ASR_PLAYER_CLASS}.${_ASR_READY_PLAYER_CLASS} .caption-window,
+      .${_ASR_PLAYER_CLASS}.${_ASR_READY_PLAYER_CLASS} .ytp-caption-window-rollup,
+      .${_ASR_PLAYER_CLASS}.${_ASR_READY_PLAYER_CLASS} .ytp-caption-window-container .caption-window,
       .${_CC_PAUSED_PLAYER_CLASS} .caption-window,
       .${_CC_PAUSED_PLAYER_CLASS} .ytp-caption-window-rollup,
       .${_CC_PAUSED_PLAYER_CLASS} .ytp-caption-window-container .caption-window {
@@ -2096,6 +2107,7 @@
       root.classList.add(_ASR_PLAYER_CLASS);
     } else {
       root.classList.remove(_ASR_PLAYER_CLASS);
+      root.classList.remove(_ASR_READY_PLAYER_CLASS);
     }
   }
 
@@ -2310,6 +2322,12 @@
       P.calls++; P.totalMs += dt; if (dt > P.maxMs) P.maxMs = dt;
     }
   }
+  // 尚未收到當前譯文時維持原生字幕，連續播放不顯示空白。
+  function _syncAsrNativeVisibility(cue) {
+    _getPlayerRoot()?.classList.toggle(_ASR_READY_PLAYER_CLASS, !!cue);
+  }
+  SK._syncAsrNativeVisibility = _syncAsrNativeVisibility;
+
   function _updateOverlayImpl() {
     const YT = SK.YT;
     if (!YT.active || !YT.isAsr) return;
@@ -2342,6 +2360,7 @@
     }
     const currentMs = YT.videoEl.currentTime * 1000;
     const cue = _findActiveCue(currentMs);
+    _syncAsrNativeVisibility(cue);
     // v1.8.20: ASR + 純中文模式下,replaceSegmentEl L1909 會 early return 跳過
     // L1934 的 hideCaptionStatus → 「翻譯中…」永遠殘留。改在 overlay 寫入時若有
     // 中文 cue 命中,就主動 hide(冪等,沒 status indicator 時直接 return)。
@@ -3161,6 +3180,8 @@
     if (!YT.active || generation !== (YT.captionSourceGen || 0)) return;
     const sentences = _heuristicMergeAsr(refined);
     if (sentences.length === 0) return;
+    // Jev 回傳的分句片段是副本，完成集合必須標記視窗原始物件。
+    const originalSegs = new Map(windowSegs.map(seg => [seg.startMs, seg]));
 
     // v2.0.54:視窗尾組 endMs 同 LLM 路徑改用 rawSegments 真實後繼片段起點
     // (_heuristicMergeAsr 只看得到 windowSegs,尾組原本固定 +1500ms 系統性提早收)
@@ -3178,7 +3199,7 @@
     const units = sentences.map(s => ({
       text: s.text,
       keys: s.sourceSegs.map(seg => seg.normText),
-      sourceSegs: s.sourceSegs,
+      sourceSegs: s.sourceSegs.map(seg => originalSegs.get(seg.startMs) || seg),
       _cue: {
         startMs: s.startMs, endMs: s.endMs, sourceText: s.text,
         segStarts: s.sourceSegs.map(seg => seg.startMs),
@@ -3403,6 +3424,10 @@
     const YT = SK.YT;
     if (YT.bgWorkerRunning || !YT.active || !YT.rawSegments?.length) return;
     if (_shouldSkipBecauseAlreadyTraditionalChinese()) return;
+    const config = YT.config || await getYtConfig();
+    // 本地模型只使用前景視窗預翻。全軌 worker 與前景共用序列佇列會互相阻塞。
+    if (config.engine === 'openai-compat' && config.localModel) return;
+    if (YT.bgWorkerRunning || !YT.active) return;
 
     YT.bgWorkerRunning = true;
     const currentAbort = { aborted: false };
@@ -3416,7 +3441,6 @@
     });
 
     try {
-      const config = YT.config || await getYtConfig();
       // 全軌預處理平滑化佇列
       if (!YT.bgQueue || YT.bgQueue.length === 0) {
         if (YT.isAsr) {
@@ -3443,14 +3467,6 @@
         }
       }
 
-      const HANGING_ZH = [
-        '就像當他決定', '就像當他', '像當他決定', '像當他', '例如當他決定', '比如當他決定',
-        '就像是當', '就像是', '就像當', '就像', '比如', '例如', '如同',
-        '但當', '但是', '然而', '而且', '並且', '因為', '如果', '當', '所以', '以及', '不過',
-        '但我仍', '但我', '但', '而', '且', '這', '那', '在', '我們', '我', '你', '他們'
-      ];
-      let pendingZhPrefix = '';
-
       while (YT.active && !currentAbort.aborted && myGen === (YT.captionSourceGen || 0)) {
         if (!YT.bgQueue || YT.bgQueue.length === 0) break;
 
@@ -3459,10 +3475,10 @@
         const curMs = video ? Math.floor(video.currentTime * 1000) : 0;
         let targetIdx = 0;
 
-        // 尋找當前播放時間附近且尚未在 captionMap 的句子
+        // 尋找當前播放時間附近且尚未建立顯示時間的句子
         const urgentIdx = YT.bgQueue.findIndex(u =>
           u._cue && curMs >= (u._cue.startMs - 3000) && curMs <= (u._cue.endMs + 8000) &&
-          !YT.captionMap.has(u.keys[0])
+          !YT.displayCues.some(c => c && c.startMs === u._cue.startMs && c.sourceText === u.text && c.targetText)
         );
         if (urgentIdx > 0) {
           targetIdx = urgentIdx;
@@ -3471,39 +3487,18 @@
         const unit = YT.bgQueue.splice(targetIdx, 1)[0];
         if (!unit) continue;
 
-        // 若已翻過則略過
-        if (YT.captionMap.has(unit.keys[0])) continue;
+        // ASR 完成與否依時間軸判定，文字相同仍可能是不同時段、不同合句。
+        if (unit._cue && YT.displayCues.some(c => c &&
+          c.startMs === unit._cue.startMs && c.sourceText === unit.text && c.targetText)) continue;
 
         const msgType = SK.getSubtitleBatchType(config.engine, false);
 
         try {
-          const res = await SK.safeSendMessage({
-            type: msgType,
-            payload: { texts: [unit.text], glossary: null },
-          });
+          const res = await _translateSubtitleTexts([unit.text], msgType, myGen);
 
           if (currentAbort.aborted || !YT.active || myGen !== (YT.captionSourceGen || 0)) break;
-
-          if (res?.ok && res.result?.[0]) {
-            let trans = SK.sanitizeMarkers(String(res.result[0]).trim());
-            // 標點符號清洗 (零標點規則)
-            trans = trans.replace(/[,.!?;:'"`~@#$%^&*()_+=<>{}\[\]|\\，。！？：；、…“”‘’""''「」『』（）《》【】—～·]/g, ' ')
-                         .replace(/\s+/g, ' ').trim();
-
-            if (pendingZhPrefix) {
-              trans = `${pendingZhPrefix} ${trans}`.trim();
-              pendingZhPrefix = '';
-            }
-
-            // 中文結尾懸掛詞後處理
-            for (const conj of HANGING_ZH) {
-              if (trans.endsWith(conj)) {
-                trans = trans.slice(0, -conj.length).trim();
-                pendingZhPrefix = conj;
-                break;
-              }
-            }
-
+          const trans = res.result?.[0];
+          if (trans !== null && trans !== undefined) {
             // 寫入 captionMap
             YT.captionMap.set(unit.keys[0], trans);
             for (let k = 1; k < unit.keys.length; k++) {
@@ -3518,6 +3513,8 @@
             }
 
             _updateOverlay();
+          } else {
+            SK.sendLog('warn', 'youtube', 'background subtitle incomplete after retry', { text: unit.text, startMs: unit._cue?.startMs });
           }
         } catch (err) {
           SK.sendLog('warn', 'youtube', 'bg worker unit translation error', { error: err.message, text: unit.text });
@@ -3527,10 +3524,12 @@
         await new Promise(r => setTimeout(r, 50));
       }
     } finally {
-      YT.bgWorkerRunning = false;
+      if (YT.bgWorkerAbort === currentAbort) YT.bgWorkerRunning = false;
       SK.sendLog('info', 'youtube', 'background translation worker loop finished', { gen: myGen });
     }
   }
+
+  SK._startBackgroundTranslationWorker = _startBackgroundTranslationWorker;
 
   async function translateWindowFrom(windowStartMs) {
     const YT = SK.YT;
@@ -3568,6 +3567,7 @@
     // 舊 run 的 finally 必須刪「自己加進的那個」，不可誤刪新 run 在新 Set 的同 key 標記
     const _myTranslatingWindows = YT.translatingWindows;
     _myTranslatingWindows.add(windowStartMs);  // v1.2.54: 加入 Set，允許其他視窗並行
+    const windowTranslationStarted = Date.now();
 
     // v1.3.5: try-finally 確保 translatingWindows.delete 無論如何都會執行
     // （涵蓋：正常完成、!YT.active 提前 return、catch 繼續後到達 finally）
@@ -3595,9 +3595,8 @@
     if (_myConsumedSet) windowSegs.forEach(s => _myConsumedSet.add(s.startMs));
 
     // 全軌背景 Worker 預翻快取命中檢查：若本視窗字幕皆已翻譯，直接視為完成
-    const allCached = windowSegs.length > 0 && windowSegs.every(s => YT.captionMap.has(s.normText));
+    const allCached = !YT.isAsr && windowSegs.length > 0 && windowSegs.every(s => YT.captionMap.has(s.normText));
     if (allCached) {
-      _okBatchCount = 1;
       YT.translatedWindows.add(windowStartMs);
       _updateOverlay();
       return;
@@ -4038,7 +4037,10 @@
     if (YT.lastApiMs > 0) {
       const configLookaheadMs = (YT.config?.lookaheadS ?? DEFAULT_YT_CONFIG.lookaheadS) * 1000;
       const playbackRate = YT.videoEl?.playbackRate || 1;
-      const needed = Math.ceil(YT.lastApiMs * 1.3 * playbackRate);
+      // 本地單段首批時間不代表整窗完成時間，必須計入序列佇列全部批次。
+      const elapsed = config.engine === 'openai-compat' && config.localModel
+        ? Date.now() - windowTranslationStarted : YT.lastApiMs;
+      const needed = Math.ceil(elapsed * 1.3 * playbackRate);
       YT.adaptiveLookaheadMs = Math.min(Math.max(needed, configLookaheadMs), 60000);
     }
 

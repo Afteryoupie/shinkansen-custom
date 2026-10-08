@@ -21,7 +21,6 @@ export function queueLocalSubtitle(provider, run) {
 
 export function localSubtitlePrompt(targetLanguage) {
   const language = targetLanguage === 'zh-TW' ? '台灣繁體中文' : targetLanguage;
-  return `Translate the entire subtitle into ${language}. Output only the translation on one line. ` +
-    'Translate dialogue and greetings completely. Keep names, brands and technical abbreviations. ' +
-    'Do not add explanations or invent missing words. Use spaces for pauses, without punctuation.';
+  return `Translate ALL speech to ${language}. Output only one line, no explanations or punctuation. ` +
+    'Keep names brands numbers and profanity. Remove sound-effect tags only. Never omit dialogue or complete unfinished sentences.';
 }
