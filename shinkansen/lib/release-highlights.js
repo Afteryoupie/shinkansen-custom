@@ -19,7 +19,7 @@
  *   - **patch 升級** → 完全不用動（patch 不觸發 welcome notice）
  */
 export const RELEASE_HIGHLIGHT_KEYS = [
-  'popup.banner.hl.docxsub',
-  'popup.banner.hl.pdf',
-  'popup.banner.hl.batch',
+  'popup.banner.hl.hover',
+  'popup.banner.hl.glossaryPath',
+  'popup.banner.hl.stability',
 ];

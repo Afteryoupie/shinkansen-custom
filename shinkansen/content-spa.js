@@ -1657,20 +1657,9 @@
   }
   SK._pickRescanToast = pickRescanToast;
 
-  /** 從 unit 提取原始文字（用於 seen-text 去重） */
-  function unitText(unit) {
-    if (unit.kind === 'fragment') {
-      let t = '';
-      let n = unit.startNode;
-      while (n) {
-        t += n.textContent || '';
-        if (n === unit.endNode) break;
-        n = n.nextSibling;
-      }
-      return t.trim();
-    }
-    return (unit.el?.innerText || '').trim();
-  }
+  /** 從 unit 提取原始文字（用於 seen-text 去重）——實作在 content-ns.js SK.unitText（單一資料源，
+   *  與 hasSubstantialUntranslated 共用；2026-10-07 批次 6 §4.3 搬出） */
+  const unitText = (unit) => SK.unitText(unit);
 
   // v1.10.15:把「cap 到 MAX_UNITS + 標記 seen」抽成純函式,鎖住一條 invariant——
   // 「被 cap 丟掉的 overflow unit 絕不可被標進 seenTexts」。

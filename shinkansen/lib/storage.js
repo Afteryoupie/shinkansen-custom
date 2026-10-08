@@ -757,6 +757,7 @@ export const DEFAULT_SETTINGS = {
     // 預設 100 = 跟隨各平台原生字幕大小（桌面零改變）。設定在 popup,只在 YouTube 影片頁顯示。
     captionScale: 100,
     // v2.5.0: Jev 類型化決策引擎 (System One) 字幕過濾與智慧分流
+    preferEnglishAsr: false,
     jevEnabled: false,
     jevApiKey: '',
     jevApiUrl: 'https://api.typesafe.ai/v1/systemone',

@@ -10,7 +10,7 @@ final class GuardianStatusView: NSView {
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
-        let title = NSTextField(labelWithString: "翻譯守護")
+        let title = NSTextField(labelWithString: "LLM watchdog")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.frame = NSRect(x: 18, y: 72, width: 110, height: 22)
         status.font = .systemFont(ofSize: 11, weight: .medium)
@@ -96,7 +96,7 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
         item("複製 API 網址", "doc.on.doc", #selector(copyApiUrl), key: "c")
         refreshItem = item("重新連線", "arrow.clockwise", #selector(reconnect))
         menu.addItem(.separator())
-        quitItem = item("結束守護與模型服務…", "power", #selector(quitApp), key: "q")
+        quitItem = item("退出 LLM watchdog…", "power", #selector(quitApp), key: "q")
     }
 
     private func startPolling() {
@@ -158,7 +158,7 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
         panel.progress.isHidden = true
         if !isConnected {
             panel.countdown.stringValue = "尚未連線"
-            panel.detail.stringValue = "正在重試；請確認守護程式已啟動"
+            panel.detail.stringValue = "正在重試；請確認LLM watchdog已啟動"
         } else if busy || starting {
             panel.countdown.stringValue = starting ? "載入中" : "處理中"
             panel.detail.stringValue = "操作完成後會自動更新"
@@ -217,21 +217,29 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
     private func guardianIcon(status: String) -> NSImage {
         let image = NSImage(size: NSSize(width: 28, height: 18), flipped: false) { _ in
             NSColor.black.setFill()
-            let upper = NSBezierPath(roundedRect: NSRect(x: 1, y: 8, width: 13, height: 9), xRadius: 2, yRadius: 2)
-            upper.fill()
-            let tail = NSBezierPath()
-            tail.move(to: NSPoint(x: 3, y: 9)); tail.line(to: NSPoint(x: 3, y: 5)); tail.line(to: NSPoint(x: 8, y: 9)); tail.close(); tail.fill()
-            let lower = NSBezierPath(roundedRect: NSRect(x: 7, y: 1, width: 12, height: 6), xRadius: 2, yRadius: 2)
-            lower.fill()
+            let face = NSBezierPath(roundedRect: NSRect(x: 1, y: 3, width: 18, height: 12), xRadius: 4, yRadius: 4)
+            face.fill()
+            for points in [[NSPoint(x: 1, y: 12), NSPoint(x: 1, y: 18), NSPoint(x: 8, y: 14)],
+                           [NSPoint(x: 12, y: 14), NSPoint(x: 19, y: 18), NSPoint(x: 19, y: 12)]] {
+                let ear = NSBezierPath(); ear.move(to: points[0]); ear.line(to: points[1]); ear.line(to: points[2]); ear.close(); ear.fill()
+            }
+            if let context = NSGraphicsContext.current?.cgContext {
+                context.saveGState(); context.setBlendMode(.clear)
+                let eyeHeight: CGFloat = status == "sleeping" ? 1 : 3
+                context.fill(CGRect(x: 5, y: 10, width: 3, height: eyeHeight))
+                context.fill(CGRect(x: 12, y: 10, width: 3, height: eyeHeight))
+                context.fill(CGRect(x: 8, y: 6, width: 4, height: 2))
+                context.restoreGState()
+            }
             let state = NSBezierPath()
             state.lineWidth = 1.5
             state.lineCapStyle = .round
             NSColor.black.setStroke()
             switch status {
             case "running":
-                state.move(to: NSPoint(x: 22, y: 8)); state.line(to: NSPoint(x: 24, y: 6)); state.line(to: NSPoint(x: 27, y: 11)); state.stroke()
+                state.move(to: NSPoint(x: 22, y: 5)); state.line(to: NSPoint(x: 22, y: 13)); state.line(to: NSPoint(x: 28, y: 9)); state.close(); state.fill()
             case "starting":
-                NSBezierPath(ovalIn: NSRect(x: 22, y: 7, width: 5, height: 5)).stroke()
+                state.move(to: NSPoint(x: 22, y: 5)); state.line(to: NSPoint(x: 28, y: 5)); state.line(to: NSPoint(x: 22, y: 13)); state.line(to: NSPoint(x: 28, y: 13)); state.close(); state.stroke()
             case "sleeping":
                 state.move(to: NSPoint(x: 23, y: 6)); state.line(to: NSPoint(x: 23, y: 11)); state.move(to: NSPoint(x: 26, y: 6)); state.line(to: NSPoint(x: 26, y: 11)); state.stroke()
             default:
@@ -248,7 +256,7 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
         button.title = ""
         button.image = guardianIcon(status: status)
         let labels = ["running": "運行就緒", "starting": "正在載入", "sleeping": "休眠待命", "disconnected": "尚未連線"]
-        let label = "翻譯守護 · \(labels[status] ?? "狀態未知") · \(currentModel)"
+        let label = "LLM watchdog · \(labels[status] ?? "狀態未知") · \(currentModel)"
         button.toolTip = label
         button.setAccessibilityLabel(label)
     }
@@ -305,10 +313,10 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
     }
     @objc private func quitApp() {
         let alert = NSAlert()
-        alert.messageText = "結束翻譯守護？"
-        alert.informativeText = "將停止模型與本機 API 服務。需要時可重新開啟翻譯守護 app。"
+        alert.messageText = "結束LLM watchdog？"
+        alert.informativeText = "將停止模型與本機 API 服務。需要時可重新開啟LLM watchdog app。"
         alert.addButton(withTitle: "取消")
-        alert.addButton(withTitle: "結束守護")
+        alert.addButton(withTitle: "結束 LLM watchdog")
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertSecondButtonReturn else { return }
         if !isConnected { NSApp.terminate(nil); return }

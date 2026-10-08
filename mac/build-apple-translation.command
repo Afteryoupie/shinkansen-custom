@@ -17,4 +17,4 @@ elif ! git apply --reverse --check "$PATCH_FILE" 2>/dev/null; then
   exit 1
 fi
 xcrun swift build -c release
-echo "Apple 翻譯後端已建置完成。請重新啟動守護代理並選取 Apple Intelligence（新幹線翻譯）。"
+echo "Apple 翻譯後端已建置完成。請重新啟動LLM watchdog並選取 Apple Intelligence（新幹線翻譯）。"

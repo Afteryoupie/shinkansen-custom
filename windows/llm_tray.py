@@ -1,260 +1,274 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-LLM Watchdog 系統列圖示
-- 綠色 LLM 圖示：llama-server 運行中
-- 白色 LLM 圖示：llama-server 休眠中（待命）
-- 右鍵選單：開啟儀表板、啟動/休眠模型、退出守護代理
-輪詢 http://127.0.0.1:8080/api/status 取得狀態。
-"""
-
+"""Windows native right-click tray for LLM watchdog."""
+import json
+import math
 import threading
 import time
-import sys
+from pathlib import Path
 import urllib.request
-import urllib.error
-import json
-import subprocess
-import webbrowser
 import urllib.parse
+import webbrowser
 
-try:
-    from PIL import Image, ImageDraw, ImageFont
-    import pystray
-except ImportError:
-    import subprocess
-    subprocess.run([sys.executable, "-m", "pip", "install", "pystray", "Pillow", "-q"])
-    from PIL import Image, ImageDraw, ImageFont
-    import pystray
+from PIL import Image
+import pystray
 
-API_BASE = "http://127.0.0.1:8080"
-POLL_INTERVAL = 3  # 秒
+API_BASE = 'http://127.0.0.1:8080'
+# A constant, non-interactive header anchors the width of both native menus.
+MENU_CAPTION = 'LLM watchdog' + '\u2007' * 28
 
-# ────────────────────────────────────────────────────
-#  圖示生成：LLM 字樣 + 狀態燈
-# ────────────────────────────────────────────────────
-
-def _make_icon(running: bool, starting: bool = False) -> Image.Image:
-    size = 64
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    # 背景圓形（石板海軍珊瑚配色調和）
-    if starting:
-        bg_color = (215, 75, 75, 235)   # 珊瑚朱紅：啟動載入中 (#D74B4B)
-    elif running:
-        bg_color = (74, 222, 128, 235)  # 翠綠：運行中 (#4ade80)
-    else:
-        bg_color = (71, 95, 119, 220)   # 鋼青藍灰：待命顯存釋放 (#475F77)
-
-    draw.ellipse([2, 2, size - 2, size - 2], fill=bg_color)
-
-    # 繪製「LLM」字樣（象牙暖白）
-    text = "LLM"
-    text_color = (255, 255, 255, 255) if (running or starting) else (220, 221, 216, 255)
-    try:
-        font = ImageFont.truetype("arialbd.ttf", 18)
-    except Exception:
-        font = ImageFont.load_default()
-
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
-    draw.text(((size - tw) // 2, (size - th) // 2 - 2), text, fill=text_color, font=font)
-
-    # 狀態指示小圓點（右下角）
-    dot_color = (74, 222, 128) if running else ((215, 75, 75) if starting else (156, 177, 196))
-    draw.ellipse([size - 18, size - 18, size - 4, size - 4], fill=dot_color, outline=(28, 40, 51, 180))
-
-    return img
+PAPER, INK, ACCENT = '#F5F3EC', '#242620', '#BF421F'
 
 
-# ────────────────────────────────────────────────────
-#  API 查詢
-# ────────────────────────────────────────────────────
-
-def api_get(path: str) -> dict | None:
-    try:
-        with urllib.request.urlopen(f"{API_BASE}{path}", timeout=2) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return None
+def compact_name(text, head=14, tail=10):
+    return text if len(text) <= head + tail + 1 else text[:head] + '…' + text[-tail:]
 
 
-def api_post(path: str) -> dict | None:
-    try:
-        req = urllib.request.Request(f"{API_BASE}{path}", method="POST", data=b"")
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return None
+def compact_line(text, limit=28):
+    # Chinese characters take approximately two Latin character columns.
+    import unicodedata
+    width = 0
+    for index, char in enumerate(text):
+        width += 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
+        if width > limit:
+            return text[:index] + '…'
+    return text
 
 
-# ────────────────────────────────────────────────────
-#  系統列應用程式
-# ────────────────────────────────────────────────────
+def request(path, method='GET', timeout=3):
+    req = urllib.request.Request(API_BASE + path, method=method,
+                                 data=b'' if method == 'POST' else None)
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.load(response)
+
+
+def presentation(data, deadline, now):
+    """Derive the visible status from a monotonic backend deadline."""
+    if not data:
+        return '未連線', '—', '請確認 LLM watchdog 已啟動', 0
+    status = data.get('status')
+    if status == 'starting':
+        return '載入中', '載入中…', '模型就緒後開始計時', 0
+    if status != 'running':
+        return '休眠待命', '待命', '下一次請求會自動喚醒', 0
+    if data.get('active_requests', 0):
+        return '運行就緒', '推論中', '完成請求後重新開始倒數', 0
+    timeout = data.get('idle_timeout', 0)
+    if not data.get('auto_sleep_enabled', True) or timeout <= 0:
+        return '運行就緒', '常駐', '自動休眠已關閉或此模型保持常駐', 0
+    remaining = max(0, math.ceil(deadline - now))
+    return ('運行就緒', f'{remaining // 60:02d}:{remaining % 60:02d}',
+            '後自動休眠 · 新請求會重設倒數' if remaining else '等待服務進入休眠',
+            min(1, remaining / timeout))
+
+
+def make_icon(status):
+    state = status if status in ('running', 'sleeping', 'starting') else 'offline'
+    path = Path(__file__).resolve().parents[1] / 'watchdog/assets' / f'watchdog-{state}.png'
+    with Image.open(path) as source:
+        image = source.convert('RGBA')
+    return image.resize((64, 64), Image.Resampling.LANCZOS)
+
+class RightClickIcon(pystray.Icon):
+    def _on_notify(self, wparam, lparam):
+        # pystray's Windows backend caches the native menu. Refresh immediately
+        # before opening it, never destroy/rebuild a menu under the pointer.
+        if lparam == 0x0205:  # WM_RBUTTONUP
+            self.update_menu()
+        return super()._on_notify(wparam, lparam)
+
 
 class LLMTray:
     def __init__(self):
-        self._status = "offline"  # offline / sleeping / starting / running
-        self._model_name = ""
-        self._models = []
-        self._auto_sleep_enabled = True
-        self._lock = threading.Lock()
+        self.lock = threading.RLock()
+        self.closed = threading.Event()
+        self.data = None
+        self.deadline = 0
+        self.busy = False
+        self.quitting = False
+        self.feedback = ''
+        self.backend_pid = None
+        self._tray = RightClickIcon('llm_watchdog', make_icon('offline'), 'LLM watchdog',
+                                    menu=pystray.Menu(lambda: iter(self._items())))
 
-        # 建立 pystray 圖示
-        self._tray = pystray.Icon(
-            name="llm_watchdog",
-            icon=_make_icon(False),
-            title="LLM 守護代理（待命中）",
-            menu=self._build_menu()
-        )
-
-    # ── 選單建立 ──────────────────────────────────────
-
-    def _build_menu(self):
-        with self._lock:
-            models = list(self._models)
-            auto_sleep = self._auto_sleep_enabled
-
-        # 模型次選單項目（純文字，點選即切換並啟動）
-        if models:
-            model_items = [
-                pystray.MenuItem(
-                    m["name"],
-                    self._make_switch_handler(m["id"])
-                )
-                for m in models
-            ]
-        else:
-            model_items = [
-                pystray.MenuItem("(尚未偵測到模型)", None, enabled=False)
-            ]
-
-        auto_sleep_label = "✓ 自動休眠：開啟 (3m)" if auto_sleep else "　自動休眠：關閉 (常駐)"
-
-        return pystray.Menu(
-            pystray.MenuItem("開啟控制儀表板", self._open_dashboard),
+    def _items(self):
+        with self.lock:
+            data = dict(self.data) if self.data else {}
+            state, countdown, detail, _ = presentation(self.data, self.deadline, time.monotonic())
+            busy, feedback, quitting = self.busy, self.feedback, self.quitting
+        enabled = bool(data) and not busy and data.get('status') != 'starting'
+        running = data.get('status') == 'running'
+        model_id = data.get('current_model_id')
+        model_items = [pystray.MenuItem(MENU_CAPTION, None, enabled=False), pystray.Menu.SEPARATOR]
+        for model in data.get('models', []):
+            selected = model['id'] == model_id
+            path = 'switch?model=' + urllib.parse.quote(model['id'], safe='')
+            model_items.append(pystray.MenuItem(compact_name(model['name']), self._handler(path, '切換模型'),
+                checked=lambda _, chosen=selected: chosen,
+                enabled=enabled and not (selected and running)))
+        if not data.get('models'):
+            model_items.append(pystray.MenuItem('尚無可用模型', None, enabled=False))
+        items = [
+            pystray.MenuItem(MENU_CAPTION, None, enabled=False),
+            pystray.MenuItem(state, None, enabled=False),
+            pystray.MenuItem('休眠倒數：' + countdown, None, enabled=False),
+            pystray.MenuItem(compact_line(detail), None, enabled=False),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "切換並啟動模型",
-                pystray.Menu(*model_items)
-            ),
-            pystray.MenuItem("立即休眠釋放顯存", self._sleep_model),
-            pystray.MenuItem(auto_sleep_label, self._toggle_auto_sleep),
+            pystray.MenuItem(compact_name(data.get('current_model', '選擇模型')), pystray.Menu(*model_items), enabled=enabled),
+            pystray.MenuItem('正在處理…' if busy else '模型載入中…' if data.get('status') == 'starting' else '立即休眠' if running else '啟動模型',
+                            self._handler('sleep' if running else 'wake', '模型休眠' if running else '啟動模型'), enabled=enabled),
+            pystray.MenuItem('閒置時自動休眠', self._handler('toggle_auto_sleep', '更新休眠策略'),
+                            checked=lambda _: data.get('auto_sleep_enabled', False),
+                            enabled=bool(data) and not busy and data.get('idle_timeout', 0) > 0),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("重新整理狀態", self._refresh_now),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出守護代理", self._quit),
-        )
+            pystray.MenuItem('開啟網頁控制台', lambda *_: webbrowser.open(API_BASE + '/status')),
+            pystray.MenuItem('複製 API 網址', self._copy),
+            pystray.MenuItem('重新整理狀態', lambda *_: threading.Thread(target=self._refresh, daemon=True).start()),
+        ]
+        if feedback:
+            items.append(pystray.MenuItem(compact_line(feedback), None, enabled=False))
+        items.extend([pystray.Menu.SEPARATOR,
+                      pystray.MenuItem('退出 LLM watchdog…', self._quit, enabled=not quitting)])
+        return items
 
-    def _make_switch_handler(self, model_id: str):
-        """為每個模型產生獨立的點擊處理函式"""
-        def handler(icon=None, item=None):
-            threading.Thread(target=self._do_switch, args=(model_id,), daemon=True).start()
-        return handler
+    def _handler(self, path, label):
+        def handle(icon=None, item=None):
+            self.action(path, label)
+        return handle
 
-    def _do_switch(self, model_id: str):
+    def action(self, path, label):
+        with self.lock:
+            if self.quitting or ((self.busy or not self.data) and path != 'stop'):
+                return
+            if path == 'stop':
+                self.quitting = True
+            self.busy = True
+            self.feedback = label + '中，請稍候…'
+        def work():
+            try:
+                result = request('/api/' + path, 'POST', timeout=10 if path == 'stop' else 180)
+                if result.get('status') not in ('ok', 'stopped'):
+                    raise RuntimeError(result.get('message', '服務未完成操作'))
+                with self.lock:
+                    self.feedback = label + '完成'
+                if path == 'stop':
+                    self._close()
+                    return
+            except Exception as error:
+                if path == 'stop' and self._backend_exited():
+                    self._close()
+                    return
+                with self.lock:
+                    self.feedback = label + '失敗：' + str(error)
+                self._tray.notify(self.feedback, 'LLM watchdog')
+            finally:
+                with self.lock:
+                    self.busy = False
+                    if path == 'stop':
+                        self.quitting = False
+            self._refresh()
+        threading.Thread(target=work, daemon=True).start()
+
+    def _copy(self, icon=None, item=None):
+        import ctypes
+        user, kernel = ctypes.windll.user32, ctypes.windll.kernel32
+        kernel.GlobalAlloc.restype = ctypes.c_void_p
+        kernel.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel.GlobalLock.restype = ctypes.c_void_p
+        kernel.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        kernel.GlobalFree.argtypes = [ctypes.c_void_p]
+        user.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        user.SetClipboardData.restype = ctypes.c_void_p
+        text = (API_BASE + '/v1' + '\0').encode('utf-16-le')
+        handle = kernel.GlobalAlloc(0x0002, len(text))
+        copied = False
         try:
-            url = f"{API_BASE}/api/switch?model={urllib.parse.quote(model_id)}"
-            req = urllib.request.Request(url, method="POST", data=b"")
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                pass
-        except Exception:
-            pass
-        time.sleep(0.5)
-        self._refresh_state()
-
-    # ── 狀態輪詢（背景執行緒）────────────────────────
-
-    def _poll_loop(self):
-        while True:
-            self._refresh_state()
-            time.sleep(POLL_INTERVAL)
-
-    def _refresh_state(self):
-        data = api_get("/api/status")
-        with self._lock:
-            if data is None:
-                self._status = "offline"
-                self._model_name = ""
-                self._models = []
-                self._auto_sleep_enabled = True
-            else:
-                self._status = data.get("status", "sleeping")
-                self._model_name = data.get("current_model", "")
-                self._models = data.get("models", [])
-                self._auto_sleep_enabled = data.get("auto_sleep_enabled", True)
-        self._update_icon()
-        # 每次狀態更新也重建選單（模型清單可能改變）
-        try:
-            self._tray.menu = self._build_menu()
-        except Exception:
-            pass
-
-    def _update_icon(self):
-        with self._lock:
-            status = self._status
-            model = self._model_name
-
-        running   = (status == "running")
-        starting  = (status == "starting")
-        offline   = (status == "offline")
-
-        new_icon = _make_icon(running, starting)
-
-        if offline:
-            tip = "LLM 守護代理（未啟動）"
-        elif starting:
-            tip = f"LLM 守護代理 啟動中：{model}"
-        elif running:
-            tip = f"LLM 守護代理 運行中：{model}"
-        else:
-            tip = "LLM 守護代理 待命（顯存已釋放）"
-
-        self._tray.icon = new_icon
-        self._tray.title = tip
-
-    # ── 動作 ─────────────────────────────────────────
-
-    def _open_dashboard(self, icon=None, item=None):
-        webbrowser.open(f"{API_BASE}/status")
-
-    def _wake_model(self, icon=None, item=None):
-        api_post("/api/wake")
-        time.sleep(0.5)
-        self._refresh_state()
-
-    def _sleep_model(self, icon=None, item=None):
-        api_post("/api/sleep")
-        time.sleep(0.5)
-        self._refresh_state()
-
-    def _toggle_auto_sleep(self, icon=None, item=None):
-        api_post("/api/toggle_auto_sleep")
-        time.sleep(0.3)
-        self._refresh_state()
-
-    def _refresh_now(self, icon=None, item=None):
-        self._refresh_state()
+            if not handle:
+                raise OSError('無法配置剪貼簿記憶體')
+            pointer = kernel.GlobalLock(handle)
+            if not pointer:
+                raise OSError('無法存取剪貼簿記憶體')
+            ctypes.memmove(pointer, text, len(text))
+            kernel.GlobalUnlock(handle)
+            if not user.OpenClipboard(None):
+                raise OSError('剪貼簿暫時無法使用')
+            try:
+                if not user.EmptyClipboard() or not user.SetClipboardData(13, handle):
+                    raise OSError('無法寫入剪貼簿')
+                copied = True  # Clipboard owns the allocated memory now.
+            finally:
+                user.CloseClipboard()
+            self._tray.notify('API 網址已複製', 'LLM watchdog')
+        except OSError as error:
+            self._tray.notify(str(error), 'LLM watchdog')
+        finally:
+            if handle and not copied:
+                kernel.GlobalFree(handle)
 
     def _quit(self, icon=None, item=None):
-        api_post("/api/stop")
+        import ctypes
+        with self.lock:
+            if self.quitting:
+                return
+        # MB_SETFOREGROUND | MB_TOPMOST: a tray-owned dialog must remain visible.
+        if ctypes.windll.user32.MessageBoxW(None, '結束 LLM watchdog？這會停止模型與本機 API 服務。', 'LLM watchdog', 0x24 | 0x10000 | 0x40000) != 6:
+            return
+        if self.data or (self.backend_pid is not None and not self._backend_exited()):
+            self.action('stop', '結束 LLM watchdog')
+        else:
+            self._close()
+
+    def _close(self):
+        self.closed.set()
         self._tray.stop()
 
-    # ── 啟動 ──────────────────────────────────────────
+    def _backend_exited(self):
+        if self.backend_pid is None:
+            return False
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel.OpenProcess(0x100000, False, self.backend_pid)
+        if not handle:
+            return kernel.GetLastError() == 87
+        try:
+            return kernel.WaitForSingleObject(ctypes.c_void_p(handle), 0) == 0
+        finally:
+            kernel.CloseHandle(ctypes.c_void_p(handle))
+
+    def _refresh(self):
+        try:
+            data = request('/api/status')
+        except Exception:
+            data = None
+        with self.lock:
+            old_status = self.data.get('status') if self.data else None
+            self.data = data
+            if data:
+                self.deadline = time.monotonic() + data.get('idle_remaining', 0)
+                if self.backend_pid is None:
+                    try:
+                        import tempfile
+                        self.backend_pid = int((Path(tempfile.gettempdir()) / 'llm_watchdog.pid').read_text())
+                    except (OSError, ValueError):
+                        pass
+            state, countdown, _, _ = presentation(data, self.deadline, time.monotonic())
+            status = data.get('status') if data else None
+            if status != old_status:
+                self._tray.icon = make_icon(status)
+            self._tray.title = ('LLM watchdog · ' + state + ' · ' + countdown)[:127]
+
+    def _poll(self):
+        while not self.closed.is_set():
+            self._refresh()
+            if self._backend_exited():
+                self._close()
+                return
+            self.closed.wait(2)
 
     def run(self):
-        # 背景輪詢執行緒
-        t = threading.Thread(target=self._poll_loop, daemon=True)
-        t.start()
-        # 主執行緒跑 pystray（pystray 必須在主執行緒）
+        threading.Thread(target=self._poll, daemon=True).start()
         self._tray.run()
+        self.closed.set()
 
 
-# ────────────────────────────────────────────────────
-#  進入點
-# ────────────────────────────────────────────────────
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     LLMTray().run()

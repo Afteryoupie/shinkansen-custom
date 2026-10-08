@@ -36,7 +36,8 @@ def run_cmd(cmd, cwd=REPO_DIR):
     git_path = r"C:\Users\Ninjader\AppData\Local\Programs\Git\cmd"
     env = os.environ.copy()
     env["PATH"] = git_path + os.pathsep + env.get("PATH", "")
-    res = subprocess.run(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore")
+    _cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    res = subprocess.run(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="ignore", creationflags=_cf)
     return res.returncode, res.stdout.strip(), res.stderr.strip()
 
 def get_current_version():

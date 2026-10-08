@@ -220,7 +220,8 @@ class SubtitleLoop:
             url
         ]
         print(f"[1/5] 下載 YouTube 字幕: {' '.join(cmd)}")
-        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        _cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", creationflags=_cf)
         if res.returncode != 0:
             raise RuntimeError(f"yt-dlp 執行失敗: {res.stderr}")
 

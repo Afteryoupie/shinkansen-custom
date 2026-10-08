@@ -36,6 +36,7 @@
   const MOD_EVENT_PROP = { shift: 'shiftKey', alt: 'altKey', ctrl: 'ctrlKey' };
   const MOD_KEY_NAME = { shift: 'Shift', alt: 'Alt', ctrl: 'Control' };
   const PENDING_ATTR = 'data-shinkansen-hover-pending';
+  const PENDING_OVERLAY_ID = 'shinkansen-hover-pending-overlay';
 
   // 初始值必須與 lib/storage.js DEFAULT_SETTINGS.hoverTranslateModifier / hoverTranslateMode 同值（本檔不走 merge）
   let mode = 'off';
@@ -160,10 +161,26 @@
     return unit.el === target || (unit.el && unit.el.contains(target));
   }
 
-  function collectScoped(scope) {
+  // 跨 shadow boundary 的 closest：target 在自家 UI（toast / 懸浮按鈕）的 shadow root 內時，
+  // 一般 closest 比不到 light DOM 的 host id，會往上空跑整輪偵測（2026-10-07 批次 6 §4.5）
+  function closestComposed(el, selector) {
+    let n = el;
+    while (n && n.nodeType === Node.ELEMENT_NODE) {
+      const hit = n.closest(selector);
+      if (hit) return hit;
+      const root = n.getRootNode ? n.getRootNode() : null;
+      n = root && root.host ? root.host : null;
+    }
+    return null;
+  }
+
+  // pathTo：游標下能命中的單元只可能在 target 的祖先鏈上（元素單元用 DOM containment、fragment
+  // 的容器也是祖先），偵測層只走這條鏈，鏈外子樹整段跳過。沒有它時游標停在段落間空白 / 圖片上，
+  // 四個 hop 各對一層更大的容器整掃（Wikipedia 長條目一次 rest 約 300ms；2026-10-07 批次 6 E-1）
+  function collectScoped(scope, target) {
     let units = [];
     try {
-      units = SK.collectParagraphs(scope, null, { includeRoot: true }) || [];
+      units = SK.collectParagraphs(scope, null, { includeRoot: true, pathTo: target }) || [];
     } catch (_) { return []; }
     if (STATE.translatedMode === 'dual' && SK.consolidateDualInlineUnits) {
       units = SK.consolidateDualInlineUnits(units);
@@ -175,11 +192,11 @@
     const target = deepElementFromPoint(x, y);
     if (!target || target === document.documentElement || target === document.body) return null;
     // 自家 UI（toast / 懸浮按鈕）與已翻譯內容一律跳過
-    if (target.closest('#shinkansen-toast-host, #shinkansen-floating-host, [data-shinkansen-translated], [data-shinkansen-dual-source], ' + SK.TRANSLATION_WRAPPER_TAG)) return null;
+    if (closestComposed(target, '#shinkansen-toast-host, #shinkansen-floating-host, [data-shinkansen-translated], [data-shinkansen-dual-source], ' + SK.TRANSLATION_WRAPPER_TAG)) return null;
     let scope = nearestBlock(target);
     for (let hop = 0; scope && hop < MAX_SCOPE_HOPS; hop++) {
       if (scope === document.body || scope === document.documentElement) break;
-      const units = collectScoped(scope);
+      const units = collectScoped(scope, target);
       const hit = units.find((u) => unitContainsPoint(u, target, x, y));
       if (hit) return hit;
       // 候選段落可能是游標所在 block 的祖先（例如 block 只是段落內的 inline-block 排版容器）
@@ -217,8 +234,11 @@
   async function translateUnit(unit) {
     const el = unit.el;
     const runner = await resolveRunner();
-    if (el && el.setAttribute) el.setAttribute(PENDING_ATTR, '');
-    ensurePendingStyle();
+    // resolveRunner 內可能 await storage（讀 presets）：同上，整頁翻譯在這段期間開跑就讓位。
+    // 這裡是取 rescan signal 之前的最後一個 await——translatePage 開跑時 abort 的是「當時」
+    // 的 signal，晚於 abort 才取得的新 signal 不會被殺，所以要靠這條重判擋住
+    if (STATE.translating) return;
+    const clearPending = showPending(unit);
     const signal = SK.getRescanSignal();
     try {
       const r = await runner([unit], signal);
@@ -235,8 +255,43 @@
         });
       }
     } finally {
-      if (el && el.removeAttribute) el.removeAttribute(PENDING_ATTR);
+      clearPending();
     }
+  }
+
+  // 等待回應期間的虛線外框。元素單元直接掛 PENDING_ATTR；fragment 的 el 是整個容器（含其他
+  // 段落 / 已譯段），掛在容器上會框住整塊，改用 range 的 client rects 畫絕對定位 overlay
+  //（pointer-events:none、無文字，不進偵測；完成即移除，不留在 DOM）。2026-10-07 批次 6 §4.4
+  function showPending(unit) {
+    const el = unit.el;
+    if (unit.kind !== 'fragment') {
+      if (el && el.setAttribute) { el.setAttribute(PENDING_ATTR, ''); ensurePendingStyle(); }
+      return () => { if (el && el.removeAttribute) el.removeAttribute(PENDING_ATTR); };
+    }
+    let host = null;
+    try {
+      const range = document.createRange();
+      range.setStartBefore(unit.startNode);
+      range.setEndAfter(unit.endNode);
+      const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+      const parent = document.documentElement;
+      if (rects.length > 0 && parent) {
+        host = document.createElement('div');
+        host.id = PENDING_OVERLAY_ID;
+        host.setAttribute('aria-hidden', 'true');
+        host.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2147483647;';
+        const sx = window.scrollX || 0;
+        const sy = window.scrollY || 0;
+        for (const r of rects) {
+          const box = document.createElement('div');
+          box.style.cssText = `position:absolute;left:${r.left + sx}px;top:${r.top + sy}px;width:${r.width}px;height:${r.height}px;`
+            + 'outline:2px dashed rgba(64,128,255,.7);outline-offset:2px;';
+          host.appendChild(box);
+        }
+        parent.appendChild(host);
+      }
+    } catch (_) { /* range 失效：不畫框 */ }
+    return () => { if (host && host.parentNode) host.parentNode.removeChild(host); };
   }
 
   async function fire() {
@@ -252,7 +307,10 @@
         try { settings = await browser.storage.sync.get(null); } catch (_) { /* 用預設 */ }
         SK.applyTranslateDisplaySettings?.(settings);
       }
-      if (!armed) return;
+      // 上方 await 期間整頁翻譯可能已開跑（Alt+S）：translatePage 同步設 translating 後也在
+      // await storage，誰先 resolve 不保證——若本輪晚回還無條件寫 translatedMode，會把整頁剛
+      // 鎖定的 single 蓋成懸停的 dual，整頁每一段都注成雙語。await 之後必須重判
+      if (!armed || STATE.translating) return;
       // 懸停譯文的顯示方式獨立於整頁 displayMode：注入層（content-inject.js）與 dual 合併
       // （consolidateDualInlineUnits）都讀 STATE.translatedMode，本輪暫時切成懸停設定，結束後
       // 還原成整頁的鎖定值（混合 single / dual 的還原簿記本就支援，translationCache 有項即清

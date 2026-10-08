@@ -104,13 +104,13 @@
     let playerResponseAvailable = false;
     let videoId = null;
     let activeTrack = null;
-    // 自動配音影片(v2.5.1 起):每條配音音軌各有一條 kind='asr' 字幕軌(實測 BiN5ERktXz0
-    // 英文口說影片有 20 條 ASR,且 captionTracks 順序每次載入不同),isolated 端 chooser
-    // 靠「唯一 ASR」推導源語會抓錯。多帶兩個 YouTube 自己的訊號讓 chooser 挑對原音 ASR:
+    // 自動配音影片（v2.5.1 起）：每條配音音軌各有一條 kind='asr' 字幕軌（實測 BiN5ERktXz0
+    // 英文口說影片有 20 條 ASR，且 captionTracks 順序每次載入不同），isolated 端 chooser
+    // 靠「唯一 ASR」推導源語會抓錯。多帶兩個 YouTube 自己的訊號讓 chooser 挑對原音 ASR：
     //   defaultCaptionTrackIndex:audioTracks[defaultAudioTrackIndex].defaultCaptionTrackIndex
-    //     (YouTube 對該音軌推薦的預設字幕軌 index,實測所有音軌都指向原音語 ASR)
+    //     （YouTube 對該音軌推薦的預設字幕軌 index，實測所有音軌都指向原音語 ASR）
     //   originalAudioLang:streamingData.adaptiveFormats 內 audioTrack.audioIsDefault 的音軌
-    //     語言(id 形如 `en-US.4`,取 `.` 前段);沒配音的影片沒 audioTrack 欄位 → null
+    //     語言（id 形如 `en-US.4`，取 `.` 前段）；沒配音的影片沒 audioTrack 欄位 → null
     let defaultCaptionTrackIndex = null;
     let originalAudioLang = null;
     const player = document.querySelector('#movie_player');

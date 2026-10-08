@@ -388,6 +388,7 @@ def stop_llm():
                     ["taskkill", "/F", "/T", "/PID", str(pid)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 try:
                     state.llm_proc.wait(timeout=2)

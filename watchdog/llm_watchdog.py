@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🌐 本地 LLM 智慧守護代理 (Smart Watchdog & Model Switcher)
+🌐 本地 LLM watchdog (Smart Watchdog & Model Switcher)
 - 常駐監聽 8080（推論請求代理與 API 控制）
 - 待命狀態僅佔用 ~15MB RAM、0.0% CPU
 - 自動動態掃描 ~/LLM/Models 下的所有模型 (MLX 與 GGUF)
@@ -45,14 +45,14 @@ from watchdog.server import (
 
 def cleanup():
     """清理退出處理：停止 LLM 並刪除 PID 檔"""
-    print("\n[🛑 關閉] 正在關閉守護進程與 LLM...", flush=True)
+    print("\n[🛑 關閉] 正在關閉LLM watchdog與 LLM...", flush=True)
     stop_llm()
     if PID_FILE.exists():
         try:
             PID_FILE.unlink()
         except Exception:
             pass
-    print("[✓ 完成] 守護進程已退出。\n", flush=True)
+    print("[✓ 完成] LLM watchdog已退出。\n", flush=True)
 
 async def main():
     state.lock = asyncio.Lock()
@@ -70,7 +70,7 @@ async def main():
                 pass
 
     print("=" * 65)
-    print("  🌐  LLM 智慧守護代理與模型切換中樞 (Smart Watchdog Proxy)")
+    print("  🌐  LLM watchdog與模型切換中樞 (Smart Watchdog Proxy)")
     print("=" * 65)
     cur_name = state.current_model["name"] if state.current_model else "無"
     print(f"  預設模型    : {cur_name}")

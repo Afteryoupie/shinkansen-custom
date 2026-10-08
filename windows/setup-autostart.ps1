@@ -1,4 +1,4 @@
-﻿param (
+param (
     [switch]$Uninstall
 )
 
@@ -28,7 +28,7 @@ if ($Uninstall) {
 Set-ItemProperty -Path $RegPath -Name $RegName -Value $Command
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "  LLM 智慧守護代理 - 開機自動啟動設定" -ForegroundColor Cyan
+Write-Host "  LLM watchdog - 開機自動啟動設定" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "[OK] 已更新為「開機靜默啟動（無確認視窗）」！" -ForegroundColor Green
 Write-Host ""
@@ -39,6 +39,6 @@ Write-Host ""
 Write-Host "說明事項：" -ForegroundColor White
 Write-Host "  1. 開機登入時將完全在背景啟動，不會有任何黑視窗或確認畫面閃爍。" -ForegroundColor Gray
 Write-Host "  2. 啟動後可直接在右下角系統匣看到 LLM 狀態圖示。" -ForegroundColor Gray
-Write-Host "  3. 若手動點擊「啟動LLM守護代理.bat」，依然會正常顯示狀態與網址。" -ForegroundColor Gray
+Write-Host "  3. 若手動點擊「啟動LLM watchdog.bat」，依然會正常顯示狀態與網址。" -ForegroundColor Gray
 Write-Host "==========================================" -ForegroundColor Cyan
 Start-Sleep -Seconds 3

@@ -571,7 +571,8 @@
   // 同一份事實三條路徑各寫一份會 drift（工作流原則 §5），收斂於此。回傳 target language。
   SK.applyTranslateDisplaySettings = function applyTranslateDisplaySettings(settings) {
     settings = settings || {};
-    const TARGET = (typeof settings.targetLanguage === 'string' && ['zh-TW','zh-CN','en','ja','ko','es','fr','de'].includes(settings.targetLanguage))
+    // 合法清單讀 content-ns.js 的 SK.TARGET_LANGUAGES（lib/storage.js 鏡像），不在這裡另寫一份
+    const TARGET = (typeof settings.targetLanguage === 'string' && SK.TARGET_LANGUAGES.includes(settings.targetLanguage))
       ? settings.targetLanguage : 'zh-TW';
     STATE.targetLanguage = TARGET;
     const mode = settings.displayMode;
@@ -1395,6 +1396,14 @@
     const myAbortController = new AbortController();
     STATE.abortController = myAbortController;
     const abortSignal = myAbortController.signal;
+    // 2026-10-07 code review P2-2：懸停翻譯（content-hover.js）與延遲 rescan 的批次都掛
+    // SK.getRescanSignal()，原本只有還原 / SPA reset 會 abort 它。整頁翻譯開跑時 in-flight 的
+    // 懸停批次若晚於整頁注入才回來，單語路徑沒有「已標記元素不重注入」守門，會把整頁剛注好的
+    // 譯文再覆蓋一次（另一個模型 / 多打一次 API）。整頁翻譯本來就會重收這些段落，晚到批次一律
+    // 作廢。背景 convertOnly run（簡繁自動轉換，可能因晚 render 重試多次）不 abort：它不是
+    // 使用者主動的整頁翻譯，殺掉使用者正在等的懸停批次反而是倒退；它對同一段的本地轉換被
+    // 懸停 LLM 譯文蓋掉是可接受的（兩者都是目標語言，後者才是使用者要的）
+    if (!options.convertOnly) SK.abortRescanRuns();
     // icon badge 只代表「使用者主動觸發的翻譯」：背景簡繁自動轉換（convertOnly）不點亮
     // 也不清除——不點亮是 2026-10-02 Jimmy 指定（自動轉換不該在工具列留標示）；不清除是
     // 因為它從不擁有 badge，被手動翻譯擠掉後的收尾若還送 CLEAR 會清掉新一輪剛點亮的紅點
@@ -2456,6 +2465,8 @@
     const myAbortController = new AbortController();
     STATE.abortController = myAbortController;
     const abortSignal = myAbortController.signal;
+    // 懸停 / rescan 晚到批次作廢（同 Gemini 路徑，見 translatePage 同位置註解）
+    SK.abortRescanRuns();
     SK.safeSendMessage({ type: 'SET_BADGE_TRANSLATED' }).catch(() => {});
     const markConvertedAgain = () => {
       if (resumeConvertedOnFail) remarkConvertedPage(myAbortController);

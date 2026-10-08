@@ -560,6 +560,11 @@ if (window.__shinkansen_loaded) {
   // 2026-09-14：20 / 3500 → 40 / 7000（固定 prompt 開銷佔 input 65%，翻倍批次省三成 input token；量測見 lib/constants.js 註解）
   SK.DEFAULT_UNITS_PER_BATCH = 40;
   SK.DEFAULT_CHARS_PER_BATCH = 7000;
+  // 目標語言合法清單：鏡像 lib/storage.js TARGET_LANGUAGES（content script 無法 import）。
+  // content.js applyTranslateDisplaySettings 讀它判 settings.targetLanguage 合不合法，不合法退回
+  // 'zh-TW'——新增 target language 時這裡沒跟到，整頁 / Google / 懸停三條路徑全部翻成繁中
+  //（CLAUDE.md §20 第 9 項；test/unit/target-languages-mirror.spec.js 鎖兩邊字面相等）
+  SK.TARGET_LANGUAGES = ['zh-TW', 'zh-CN', 'en', 'ja', 'ko', 'es', 'fr', 'de'];
   SK.DEFAULT_MAX_CONCURRENT = 10;
   SK.DEFAULT_MAX_TOTAL_UNITS = 1000;
   // v1.7.2: batch 0 專用較小 limit;batch 1+ 仍用 DEFAULT_*_PER_BATCH 維持並行吞吐。
@@ -574,9 +579,9 @@ if (window.__shinkansen_loaded) {
   // 「整篇文章塞在一個 <div> 用 <br><br> 分段」(Christie's 拍品專文等)原本整塊當單一
   // element 單元 → 變成 2 萬字單一 streaming segment,Gemini flash/flash-lite 串流極慢
   // 甚至 stall「無法結束」。文字超過此值且能按段落切出 ≥2 段時,改切成多個 fragment 平行翻。
-  // 原取 DEFAULT_CHARS_PER_BATCH（3500）:超過單批 char 上限的單元本來就無法併批、只能自己一批,
+  // 原取 DEFAULT_CHARS_PER_BATCH（3500）：超過單批 char 上限的單元本來就無法併批、只能自己一批，
   // 2026-09-14 批次預算調成 7000 後此值刻意維持 3500——切分門檻是「單元多大才值得拆」,
-  // 與批次預算脫鉤,避免 detect-br-block-* 系列行為變動。
+  // 與批次預算脫鉤，避免 detect-br-block-* 系列行為變動。
   // 切分後反而能塞回正常批次平行吞吐。
   SK.BR_BLOCK_SPLIT_CHARS = 3500;
 
@@ -587,16 +592,59 @@ if (window.__shinkansen_loaded) {
   //   - 簡繁自動轉換：呼叫端傳 1（有任何未翻候選就直接翻）——自動轉換是背景行為，使用者按
   //     翻譯的意圖一律是「翻譯」，不該第一下變成還原轉換
   SK.HOVER_PAGE_RETRANSLATE_MIN_CHARS = 200;
+
+  // 單元原文（trim 後）。fragment 是「容器內一段兄弟節點」，文字只算 startNode → endNode
+  // 這一段，不是整個容器——容器可能同時含已翻譯的子段（元素單元注入後 marker 在子元素、
+  // 父容器不帶），拿容器 innerText 會把已譯內容算進去。SPA observer 的 seen-text 去重與
+  // 下方 hasSubstantialUntranslated 共用這一份（原本 content-spa.js 私有，2026-10-07 批次 6 §4.3 搬入）
+  SK.unitText = function unitText(unit) {
+    if (!unit) return '';
+    if (unit.kind === 'fragment') {
+      let t = '';
+      let n = unit.startNode;
+      while (n) {
+        t += n.textContent || '';
+        if (n === unit.endNode) break;
+        n = n.nextSibling;
+      }
+      return t.trim();
+    }
+    return (unit.el?.innerText || unit.text || '').trim();
+  };
+
+  // 2026-10-07 批次 6 E-2：結果記憶化。popup 每次開啟都經 GET_STATE 呼叫這裡（判按鈕顯示
+  // 「翻譯本頁」或「顯示原文」），長頁整頁偵測百 ms 級且同步卡住頁面；DOM 沒變答案就不會變。
+  // 以一次性 MutationObserver 失效：任何 childList / characterData / attributes 變動（含自家
+  // 注入、頁面腳本改 class）即清快取並停掉 observer，下次呼叫重算再重掛。偵測另依 target
+  // language（候選判斷 target-aware），一併進 key。量測見 SPEC-PRIVATE §32。
+  const _untranslatedMemo = new Map(); // key → boolean
+  let _untranslatedMO = null;
+  function _invalidateUntranslatedMemo() {
+    _untranslatedMemo.clear();
+    if (_untranslatedMO) { _untranslatedMO.disconnect(); _untranslatedMO = null; }
+  }
+  SK._invalidateUntranslatedMemo = _invalidateUntranslatedMemo;
   SK.hasSubstantialUntranslated = function hasSubstantialUntranslated(minChars = SK.HOVER_PAGE_RETRANSLATE_MIN_CHARS) {
+    const key = minChars + '|' + (SK.STATE?.targetLanguage || '');
+    if (_untranslatedMemo.has(key)) return _untranslatedMemo.get(key);
     const units = SK.collectParagraphs();
     let chars = 0;
+    let result = false;
     for (const u of units) {
       // dual 原文槽（懸停 dual 翻過的段落）偵測層不擋，但它已有譯文，不算未翻
       if (u.el?.closest?.('[data-shinkansen-dual-source]')) continue;
-      chars += ((u.el?.innerText || u.text || '') + '').trim().length;
-      if (chars >= minChars) return true;
+      chars += SK.unitText(u).length;
+      if (chars >= minChars) { result = true; break; }
     }
-    return false;
+    const docEl = document.documentElement;
+    if (docEl && typeof MutationObserver === 'function') {
+      if (!_untranslatedMO) {
+        _untranslatedMO = new MutationObserver(_invalidateUntranslatedMemo);
+        _untranslatedMO.observe(docEl, { childList: true, subtree: true, characterData: true, attributes: true });
+      }
+      _untranslatedMemo.set(key, result);
+    }
+    return result;
   };
 
   // SPA 動態載入常數

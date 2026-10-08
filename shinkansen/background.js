@@ -1414,6 +1414,16 @@ const messageHandlers = {
   // 不再透過 background 主動 fetch（YouTube timedtext URL 即使 same-origin 也因 exp=xpv 需要 POT）。
 
   // v1.8.41:USD → TWD 匯率（讀 cache;cache 不存在回 fallback 31.6)
+  EVALUATE_YT_BOUNDARIES: {
+    async: true,
+    handler: async (payload) => {
+      const settings = await getSettingsCached();
+      const yt = settings.ytSubtitle || {};
+      const engine = new JevDecisionEngine({ enabled: yt.jevEnabled, apiKey: yt.jevApiKey, apiUrl: yt.jevApiUrl });
+      const segments = Array.isArray(payload?.segments) ? payload.segments.slice(0, 129) : [];
+      return { ok: true, ...await engine.evaluateBoundaries(segments) };
+    },
+  },
   EXCHANGE_RATE_GET: {
     async: true,
     handler: async () => {
@@ -1941,7 +1951,10 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = 15000) {
 async function testGeminiKey(payload) {
   const apiKey = (payload?.apiKey || '').trim();
   const model = (payload?.model || 'gemini-3.8-flash').trim();
-  if (!apiKey) return { ok: false, message: 'API Key 為空，請先填入再測試。' };
+  // 2026-10-07 code review P2-5：測試結果文案不在背景寫死繁中——失敗走既有 error code 協定
+  //（codedError → errorFields，options 端 bgErrorMessage 查 error.bg.* 八語），成功回 code + params
+  //（options 端 _t 組 options.action.connectOk*）。provider 回的英文 error.message 仍原樣傳 message
+  if (!apiKey) return { ok: false, ...errorFields(codedError('testKeyEmpty', null, 'API Key 為空，請先填入再測試。')) };
   // API key 走 x-goog-api-key header,不放 URL(避免金鑰漏進會記 URL 的 proxy / log)
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}`;
   try {
@@ -1956,17 +1969,18 @@ async function testGeminiKey(payload) {
         return {
           ok: false,
           status: resp.status,
-          message: `HTTP ${resp.status}，但回應不是有效的 JSON。可能是網路環境（公司 proxy / 登入頁）攔截了請求，請換網路再試。`,
+          ...errorFields(codedError('testNonJsonGemini', { status: resp.status }, `HTTP ${resp.status}，但回應不是有效的 JSON。可能是網路環境（公司 proxy / 登入頁）攔截了請求，請換網路再試。`)),
         };
       }
-      return { ok: true, status: resp.status, message: `連線成功（model: ${j?.name || model}）` };
+      return { ok: true, status: resp.status, code: 'okModel', params: { model: j?.name || model } };
     }
     let errMsg = `HTTP ${resp.status}`;
     try { const j = await resp.json(); errMsg = j?.error?.message || errMsg; } catch { /* noop */ }
     return { ok: false, status: resp.status, message: errMsg };
   } catch (err) {
-    if (err?.name === 'AbortError') return { ok: false, message: '連線逾時，請確認網址與網路狀態。' };
-    return { ok: false, message: '網路錯誤：' + (err?.message || String(err)) };
+    if (err?.name === 'AbortError') return { ok: false, ...errorFields(codedError('testTimeout', null, '連線逾時，請確認網址與網路狀態。')) };
+    const msg = err?.message || String(err);
+    return { ok: false, ...errorFields(codedError('network', { msg }, '網路錯誤：' + msg)) };
   }
 }
 
@@ -1985,7 +1999,7 @@ async function testCustomProvider(payload) {
   const baseUrl = (payload?.baseUrl || '').trim().replace(/\/+$/, '');
   const model = (payload?.model || '').trim();
   const apiKey = (payload?.apiKey || '').trim();
-  if (!baseUrl) return { ok: false, message: 'Base URL 為空。' };
+  if (!baseUrl) return { ok: false, ...errorFields(codedError('baseUrlMissing', null, 'Base URL 為空。')) };
   // v1.6.7: API Key 允許為空（本機 llama.cpp / Ollama 等不需要 key）。商用後端
   // 若漏填會自然回 401，錯誤訊息由 provider 提供（例如 OpenAI: "Incorrect API key"）。
   // v1.8.41:Model ID 也允許為空（llama.cpp 啟動時鎖 model,body 不送 model 欄位即用 server 預設）。
@@ -2016,12 +2030,12 @@ async function testCustomProvider(payload) {
         return {
           ok: false,
           status: resp.status,
-          message: `HTTP ${resp.status}，但 Provider 回應不是有效的 JSON。請確認 Base URL 是否為正確的 OpenAI-compatible API endpoint。`,
+          ...errorFields(codedError('testNonJsonCustom', { status: resp.status }, `HTTP ${resp.status}，但 Provider 回應不是有效的 JSON。請確認 Base URL 是否為正確的 OpenAI-compatible API endpoint。`)),
         };
       }
       const used = j?.usage?.total_tokens || j?.usage?.prompt_tokens || 0;
       const modelLabel = model || j?.model || 'server-default';
-      return { ok: true, status: resp.status, message: `連線成功（${modelLabel}，本次用量約 ${used} tokens）` };
+      return { ok: true, status: resp.status, code: 'okUsage', params: { model: modelLabel, tokens: used } };
     }
     let errMsg = `HTTP ${resp.status}`;
     try {
@@ -2030,8 +2044,9 @@ async function testCustomProvider(payload) {
     } catch { /* noop */ }
     return { ok: false, status: resp.status, message: errMsg };
   } catch (err) {
-    if (err?.name === 'AbortError') return { ok: false, message: '連線逾時，請確認網址與網路狀態。' };
-    return { ok: false, message: '網路錯誤：' + (err?.message || String(err)) };
+    if (err?.name === 'AbortError') return { ok: false, ...errorFields(codedError('testTimeout', null, '連線逾時，請確認網址與網路狀態。')) };
+    const msg = err?.message || String(err);
+    return { ok: false, ...errorFields(codedError('network', { msg }, '網路錯誤：' + msg)) };
   }
 }
 

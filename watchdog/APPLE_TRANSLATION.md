@@ -4,16 +4,16 @@
 版本：40083e051488dca6eddbb8507052dd22d079c610
 
 執行 `mac/build-apple-translation.command` 建置；腳本套用 1MB HTTP body 限制修正。
-守護代理只顯示一個「Apple Foundation Models」，優先使用此 Swift API；
+LLM watchdog只顯示一個「Apple Foundation Models」，優先使用此 Swift API；
 未建置時才使用原生 fm 作為備援。
 
-路徑：新幹線 → 127.0.0.1:8080/v1 → 守護代理 →
+路徑：新幹線 → 127.0.0.1:8080/v1 → LLM watchdog →
 127.0.0.1:8081/api/v1 → FoundationModels。
 API 後端使用 Apple 的 permissiveContentTransformations 文字轉換模式。
 保持三分鐘閒置停止及模型切換。
 
 新幹線 Base URL：`http://127.0.0.1:8080/v1`，API Key 留空。
-請求中的模型名稱不決定實際模型；在守護代理中選取模型。
+請求中的模型名稱不決定實際模型；在LLM watchdog中選取模型。
 插件以 `/api/status` 的 backend_type 辨識 Apple，並將實際後端加入快取識別，
 避免切换本機模型時重用其他模型的譯文。
 

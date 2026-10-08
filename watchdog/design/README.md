@@ -1,4 +1,4 @@
-# 翻譯守護 · Desktop identity
+# LLM watchdog · Desktop identity
 
 ## Direction
 Warm paper (#F5F3EC), ink (#242620), vermilion (#BF421F). Editorial hierarchy with a quiet utility interface: large state-aware heading, model status strip, direct engine controls, and a connection/energy sidebar. System fonts keep Traditional Chinese crisp and work offline. Desktop scope only, as requested; checked at 1024, 1280 and 1440 px. At narrower desktop widths, the connection panel moves beneath the models.
@@ -26,7 +26,7 @@ iconutil -c icns /tmp/guardian.iconset -o watchdog/assets/guardian.icns
 swiftc -O watchdog/LLMMenuBar.swift -o watchdog/LLMMenuBar
 ```
 
-The local app at `/Users/linjiade/LLM/翻譯守護.app` uses `Contents/Resources/applet.icns`; the new ICNS is installed there. A copy of the previous icon is saved in `/tmp/guardian-original-applet.icns`. The launch script recompiles a newer Swift source automatically. Finder may retain its icon cache until the app is next opened.
+The local app at `/Users/linjiade/LLM/LLM watchdog.app` uses `Contents/Resources/applet.icns`; the new ICNS is installed there. A copy of the previous icon is saved in `/tmp/guardian-original-applet.icns`. The launch script recompiles a newer Swift source automatically. Finder may retain its icon cache until the app is next opened.
 
 ## Verification
 Swift compilation passed. Browser tests against an isolated mock API passed: wake, sleep, engine switch, sleep toggle, clipboard, exit dialog and Escape, stable model DOM across polling, desktop overflow, reduced motion, and disconnection recovery UI. Production model inference is outside this visual check. The preview uses illustrative model entries, not a live inventory.
@@ -44,3 +44,6 @@ Regression test: concatenate `watchdog/LLMMenuBar.swift` before `// 主程式入
 The status panel is now 100 pt high with a 17 pt countdown (previously 27 pt). The current model name is a native submenu row directly under the status panel; selecting it exposes available models, replacing the separate switch-model row.
 
 Startup regression: both status handlers and the background idle checker could stop a newly spawned process using the previous idle timestamp, before readiness was reached. All three now exclude startup. K2 has a 120-second readiness window; individual health probes are bounded to two seconds and timed-out processes are stopped before a retry. Added `tests/test_startup_idle.py`. All 16 Python tests and native UI regression tests passed. Live K2 startup with status polling succeeded (1.12 s backend readiness, 1.26 s observed request); restored K2 to its prior sleeping state afterward. This measures the current cached start, not a reboot-level cold-start benchmark.
+
+
+Windows port and the renamed macOS app build are documented in [WINDOWS.md](WINDOWS.md).

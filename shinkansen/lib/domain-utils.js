@@ -118,7 +118,8 @@
     normalizeDomainEntry: normalizeDomainEntry,
     normalizeScopeEntry: normalizeScopeEntry,
     matchDomain: matchDomain,
-    matchingDomainKeys: matchingDomainKeys
+    matchingDomainKeys: matchingDomainKeys,
+    splitScopeKey: splitScopeKey
   };
   // global = window（頁面 / content script）或 globalThis（MV3 service worker 的
   // ES module import 副作用載入——SW 沒有 window，background.js 走 globalThis.__SKDomain）

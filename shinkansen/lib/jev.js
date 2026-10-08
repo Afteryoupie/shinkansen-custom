@@ -1,148 +1,125 @@
-/**
- * lib/jev.js — TypeSafe AI Jev (System One) 類型化決策模組
- * 專為 YouTube 字幕與影片翻譯設計的次秒級決策過濾層：
- *   1. is_valid (Boolean): 判定是否為有效人聲發言（過濾純音效標籤 [Music]、[Applause]、♪、幻覺字幕）
- *   2. needs_translation (Boolean): 判定是否需要翻譯（僅在已是目標語言時放行原文）
- *   3. detected_lang (Choice): 語意語系判定 (ja, en, ko, zh, etc.)
- *
- * 高可用性（Graceful Fallback）：
- *   - 若未啟用、未填 API Key、網路異常或回應逾時，自動無縫降級走本地啟發式規則。
- *   - 完全不阻斷或崩潰任何既有翻譯管線。
- */
-
+/** TypeSafe Jev subtitle decisions. Uncertain or failed decisions retain local speech. */
 export class JevDecisionEngine {
   constructor(options = {}) {
     this.enabled = options.enabled ?? false;
     this.apiUrl = options.apiUrl || 'https://api.typesafe.ai/v1/systemone';
     this.apiKey = options.apiKey || '';
-    this.timeoutMs = options.timeoutMs || 600;
-    this.confidenceThreshold = options.confidenceThreshold || 0.6;
+    this.timeoutMs = options.timeoutMs ?? 600;
+    this.confidenceThreshold = options.confidenceThreshold ?? 0.6;
+    this.lastError = null;
   }
 
-  // 本地啟發式正則（純本地兜底使用）
   static HALLUCINATION_PATTERNS = [
     /^\[(音楽|拍手|笑い|歓声|music|applause|laughter|silence)\]$/i,
     /^[♪♫♩♬\s.,!?:;_\-]+$/,
   ];
 
-  /**
-   * 批次評估多個字幕文字
-   * @param {string[]} texts
-   * @param {string} targetLang - 目標語言代碼 (如 'zh-TW')
-   * @returns {Promise<Array<{is_valid: boolean, needs_translation: boolean, detected_lang: string, confidence: number, source: string}>>}
-   */
-  async evaluateBatch(texts, targetLang = 'zh-TW') {
-    if (!Array.isArray(texts) || texts.length === 0) return [];
-
-    // 若未啟用或無 Key，直接逐條走本地啟發式規則
-    if (!this.enabled || !this.apiKey) {
-      return texts.map(t => this.fallbackEvaluate(t, targetLang));
-    }
-
-    const t0 = Date.now();
-    const questions = texts.map((t, idx) => ({
-      context: (t || '').trim(),
-      questions: [
-        {
-          id: `valid_${idx}`,
-          type: 'boolean',
-          question: 'Is this text valid human dialogue rather than music/sound effect tags or transcription hallucination?',
-        },
-        {
-          id: `needs_${idx}`,
-          type: 'boolean',
-          question: `Does this text need translation to ${targetLang}? (False only if already entirely in ${targetLang}; greetings must also be translated)`,
-        },
-        {
-          id: `lang_${idx}`,
-          type: 'choice',
-          question: 'What is the primary spoken language of this text?',
-          choices: ['ja', 'en', 'ko', 'zh', 'other'],
-        },
-      ],
-    }));
-
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-
-      const resp = await fetch(this.apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({ items: questions }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if (resp.ok) {
-        const data = await resp.json();
-        const decisions = data.decisions || {};
-        return texts.map((t, idx) => {
-          const v = decisions[`valid_${idx}`];
-          const n = decisions[`needs_${idx}`];
-          const l = decisions[`lang_${idx}`];
-          const fallback = this.fallbackEvaluate(t, targetLang);
-          if (!v || !n || typeof v.answer !== 'boolean' || typeof n.answer !== 'boolean' ||
-              Math.min(v.confidence ?? 0, n.confidence ?? 0) < this.confidenceThreshold) return fallback;
-
-          return {
-            is_valid: fallback.is_valid,
-            needs_translation: fallback.needs_translation || n.answer,
-            detected_lang: l?.answer || 'auto',
-            confidence: ((v.confidence || 1) + (n.confidence || 1)) / 2,
-            source: 'jev',
-            latencyMs: Date.now() - t0,
-          };
-        });
-      }
-    } catch (err) {
-      // 網路逾時或異常，直接降級走本地規則
-    }
-
-    return texts.map(t => this.fallbackEvaluate(t, targetLang));
+  _decision(answer) {
+    const p = answer?.noul;
+    if (answer?.type !== 'noul' || typeof p !== 'number' || !Number.isFinite(p) || p < 0 || p > 1) return null;
+    if (p >= this.confidenceThreshold) return true;
+    if (p <= 1 - this.confidenceThreshold) return false;
+    return null;
   }
 
-  /**
-   * 本地啟發式評估
-   */
+  async _request(state, questions) {
+    const controller = new AbortController();
+    let timer;
+    try {
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error('timeout'));
+          controller.abort();
+        }, this.timeoutMs);
+      });
+      const request = (async () => {
+        const response = await fetch(this.apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+          body: JSON.stringify({ model: 'jev-latest', state, questions }),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        if (!data?.answers || typeof data.answers !== 'object' || Array.isArray(data.answers)) throw new Error('invalid answers');
+        return data.answers;
+      })();
+      return await Promise.race([request, timeout]);
+    } catch (error) {
+      this.lastError = controller.signal.aborted ? 'timeout' : error.message;
+      return null;
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
+  }
+
+  async evaluateBatch(texts, targetLang = 'zh-TW') {
+    this.lastError = null;
+    if (!Array.isArray(texts)) return [];
+    const verdicts = texts.map(text => this.fallbackEvaluate(text, targetLang));
+    if (!this.enabled || !this.apiKey) return verdicts;
+    // Two questions per text, at most 32 questions per request.
+    for (let offset = 0; offset < texts.length; offset += 16) {
+      const batch = texts.slice(offset, offset + 16);
+      const questions = {};
+      batch.forEach((_, i) => {
+        questions[`valid_${i}`] = { type: 'noul', instructions: `Is texts[${i}] human dialogue rather than a sound-effect tag or transcription noise? Preserve greetings and repeated speech.` };
+        questions[`needs_${i}`] = { type: 'noul', instructions: `Does texts[${i}] need translation to ${targetLang}? Pure Han characters alone do not establish that Japanese text is Chinese.` };
+      });
+      const answers = await this._request({ texts: batch, targetLanguage: targetLang }, questions);
+      if (!answers) break;
+      batch.forEach((_, i) => {
+        const valid = this._decision(answers[`valid_${i}`]);
+        const needs = this._decision(answers[`needs_${i}`]);
+        if (valid === null) return;
+        const fallback = verdicts[offset + i];
+        verdicts[offset + i] = {
+          ...fallback,
+          is_valid: fallback.is_valid && valid,
+          needs_translation: fallback.is_valid && valid && (needs ?? true),
+          source: 'jev',
+        };
+      });
+    }
+    return verdicts;
+  }
+
+  async evaluateBoundaries(segments) {
+    this.lastError = null;
+    if (!Array.isArray(segments)) segments = [];
+    const breakBefore = Array(segments.length).fill(null);
+    let source = 'fallback';
+    if (!this.enabled || !this.apiKey) return { breakBefore, source };
+    // Limit one evaluation to 128 boundaries. The remaining segments retain local rules.
+    const count = Math.min(segments.length - 1, 128);
+    for (let offset = 0; offset < count; offset += 32) {
+      const boundaries = [], questions = {};
+      for (let i = 0; i < Math.min(32, count - offset); i++) {
+        const index = offset + i + 1;
+        boundaries.push({ left: segments[index - 1].text, right: segments[index].text });
+        questions[`boundary_${i}`] = { type: 'noul', instructions: `Does boundaries[${i}].right begin a new sentence rather than continue boundaries[${i}].left?` };
+      }
+      const answers = await this._request({ boundaries }, questions);
+      if (!answers) break;
+      boundaries.forEach((_, i) => {
+        const decision = this._decision(answers[`boundary_${i}`]);
+        if (decision !== null) {
+          breakBefore[offset + i + 1] = decision;
+          source = 'jev';
+        }
+      });
+    }
+    return { breakBefore, source };
+  }
+
   fallbackEvaluate(text, targetLang = 'zh-TW') {
     const t = (text || '').trim();
-    if (t.length === 0) {
-      return { is_valid: false, needs_translation: false, detected_lang: 'auto', confidence: 1.0, source: 'fallback' };
-    }
-
-    // 1. 幻覺與音效標籤過濾
-    let is_valid = true;
-    for (const pat of JevDecisionEngine.HALLUCINATION_PATTERNS) {
-      if (pat.test(t)) {
-        is_valid = false;
-        break;
-      }
-    }
-    // 2. 語言與翻譯需求判定
-    const hasKana = /[\u3040-\u30ff]/.test(t);
-    const hasHangul = /[\uac00-\ud7af]/.test(t);
-    const hasHanzi = /[\u4e00-\u9fff]/.test(t);
-
-    let detected_lang = 'en';
-    if (hasKana) detected_lang = 'ja';
-    else if (hasHangul) detected_lang = 'ko';
-    else if (hasHanzi && !hasKana) detected_lang = 'zh';
-
-    let needs_translation = true;
-    if (targetLang.startsWith('zh') && detected_lang === 'zh' && !/[A-Za-z]/.test(t)) {
-      needs_translation = false;
-    }
-
-    return {
-      is_valid,
-      needs_translation,
-      detected_lang,
-      confidence: 0.85,
-      source: 'fallback',
-    };
+    const is_valid = t.length > 0 && !JevDecisionEngine.HALLUCINATION_PATTERNS.some(pattern => pattern.test(t));
+    const detected_lang = /[\u3040-\u30ff]/.test(t) ? 'ja'
+      : /[\uac00-\ud7af]/.test(t) ? 'ko'
+      : /[\u4e00-\u9fff]/.test(t) ? 'auto' : 'en';
+    // Han-only text may be Japanese. Without source-language evidence, keep translation enabled.
+    return { is_valid, needs_translation: is_valid, detected_lang, confidence: 0.85, source: 'fallback' };
   }
 }

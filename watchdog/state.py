@@ -1,7 +1,7 @@
 """
 watchdog.state
 ==============
-集中管理守護代理與本地 LLM 的全域執行狀態。
+集中管理LLM watchdog與本地 LLM 的全域執行狀態。
 """
 
 import time
@@ -9,7 +9,7 @@ import asyncio
 from typing import Optional, List, Dict, Any
 
 class State:
-    """守護進程與推論引擎執行時期狀態容器"""
+    """LLM watchdog與推論引擎執行時期狀態容器"""
     def __init__(self):
         self.llm_proc = None
         self.last_active_time: float = time.time()

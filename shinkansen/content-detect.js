@@ -877,12 +877,50 @@
   function _collectParagraphsImpl(root, stats, opts) {
     root = root || document.body;
     stats = stats || null;
+    // 2026-10-07 批次 6 E-1：opts.pathTo——只找「可能包含該節點」的單元。懸停翻譯找游標下的
+    // 單元時，命中條件是 DOM containment（元素單元的 el 是 target 的祖先或自身；fragment 的
+    // 容器亦然），不在 target 祖先鏈上的子樹不可能命中。設定後：walker 對鏈外元素一律
+    // REJECT、補抓迴圈與殭屍 marker reconcile 只看鏈上元素、shadow root 只處理鏈上 host 的。
+    // 鏈跨 shadow boundary（ShadowRoot → host）往上串到 root。整頁 / rescan 不帶此選項，行為不變。
+    // 量測（Wikipedia 台灣條目快照，游標停在段落間空白，四 hop）：300ms → 見 SPEC-PRIVATE §32。
+    const pathTo = (opts && opts.pathTo && opts.pathTo.nodeType === Node.ELEMENT_NODE) ? opts.pathTo : null;
+    let _pathSet = null;
+    let _pathShadowRoots = null;
+    if (pathTo) {
+      _pathSet = new Set();
+      _pathShadowRoots = [];
+      let _n = pathTo;
+      let _belowRoot = true;
+      while (_n) {
+        _pathSet.add(_n);
+        if (_n === root) _belowRoot = false;
+        if (_belowRoot && typeof ShadowRoot !== 'undefined' && _n instanceof ShadowRoot) _pathShadowRoots.push(_n);
+        _n = _n.parentNode || _n.host || null;
+      }
+    }
+    const onPath = (el) => !_pathSet || _pathSet.has(el);
+    // pathTo 模式下取代 scope.querySelectorAll(selector)：補抓迴圈只可能收鏈上元素，
+    // 直接沿 pathTo 往上走到 scope 收集後代、再以 matches 過濾（與 querySelectorAll ∩ 鏈 等價，
+    // 不含 scope 自身），省掉對大容器整掃幾萬個節點。沒有 pathTo 時原樣呼叫 querySelectorAll
+    const qsaOnPath = (scope, selector) => {
+      if (!_pathSet) return scope.querySelectorAll(selector);
+      const out = [];
+      let _n = pathTo;
+      while (_n && _n !== scope) {
+        if (_n.nodeType === Node.ELEMENT_NODE && _n.matches && _n.matches(selector)) out.push(_n);
+        _n = _n.parentNode || _n.host || null;
+      }
+      if (_n !== scope) return [];   // scope 不在鏈上：沒有任何鏈上後代
+      return out.reverse();          // 文件順序（外 → 內），與 querySelectorAll 一致
+    };
     // 2026-09-14 批次 7：open shadow root 清單一輪只走一次（原本殭屍 marker reconcile
     // 與 shadow descent 各走一遍整棵樹）
     let _shadowRootsCache = null;
     const _getShadowRoots = () => {
       if (_shadowRootsCache === null) {
-        _shadowRootsCache = (typeof SK.findOpenShadowRoots === 'function') ? SK.findOpenShadowRoots(root) : [];
+        _shadowRootsCache = _pathShadowRoots
+          ? _pathShadowRoots
+          : ((typeof SK.findOpenShadowRoots === 'function') ? SK.findOpenShadowRoots(root) : []);
       }
       return _shadowRootsCache;
     };
@@ -905,7 +943,8 @@
       if (_dir && SK.isConvertibleVariant) {
         let _staleCount = 0;
         const _reconcileScope = (scope) => {
-        for (const el of scope.querySelectorAll('[data-shinkansen-translated], [data-shinkansen-nodevalue-mutated]')) {
+        for (const el of qsaOnPath(scope, '[data-shinkansen-translated], [data-shinkansen-nodevalue-mutated]')) {
+          if (!onPath(el)) continue;                                        // opts.pathTo：鏈外不管
           if (el.getAttribute('contenteditable') === 'true') continue;      // 編輯模式不動
           if (el.hasAttribute('data-shinkansen-dual-source')) continue;     // dual 原文槽本就是原文
           if (el.querySelector('shinkansen-translation')) continue;        // dual wrapper 容器
@@ -1027,6 +1066,8 @@
     function processScope(scopeRoot, _includeRootCandidate) {
     const _walkerFilter = {
       acceptNode(el) {
+        // opts.pathTo：不在目標節點祖先鏈上的子樹整段 REJECT（見 _collectParagraphsImpl 開頭）
+        if (!onPath(el)) return NodeFilter.FILTER_REJECT;
         // BUTTON 放行:CJK >= 3 字 / non-CJK >= 8 字視為有意義的文字內容,
         // SKIP 讓 walker 進子節點,由後段補抓 leaf。
         // 極短 BUTTON（「送信」2 字 / "OK" 2 字）仍走 HARD_EXCLUDE REJECT。
@@ -1672,7 +1713,8 @@
     // 子 SPAN 在 walker 非-block 路徑不被收。
     // 找 BUTTON 內最深的 leaf SPAN 當 unit,保留按鈕結構(icon / SVG 不受影響)。
     // 門檻:CJK >= 3 字 / non-CJK >= 8 字。
-    scopeRoot.querySelectorAll('button').forEach(btn => {
+    qsaOnPath(scopeRoot, 'button').forEach(btn => {
+      if (!onPath(btn)) return;
       if (seen.has(btn)) return;
       const text = (btn.textContent || '').trim();
       if (text.length < _buttonThreshold(text)) return;
@@ -1728,7 +1770,8 @@
     //（Amazon 比較表格 "カートに入れる" / "購入オプション" / "報告する" 等）。
     // 門檻:CJK >= 4 字 / non-CJK >= 8 字（CJK 4 排除 histogram "星5つ" 3 字）。
     for (const block of shortBlockRejectedBlocks) {
-      block.querySelectorAll('span:not(:has(*)), a:not(:has(*))').forEach(leaf => {
+      qsaOnPath(block, 'span:not(:has(*)), a:not(:has(*))').forEach(leaf => {
+        if (!onPath(leaf)) return;
         if (seen.has(leaf)) return;
         const txt = (leaf.textContent || '').trim();
         const _sbThreshold = _CJK_RE.test(txt) ? 4 : 8;
@@ -1745,7 +1788,8 @@
 
     // 補抓 selector 指定的特殊元素
     // v1.9.13: scopeRoot.querySelectorAll(主 root 是 document.body,shadow 路徑是 ShadowRoot)
-    scopeRoot.querySelectorAll(SK.INCLUDE_BY_SELECTOR).forEach(el => {
+    qsaOnPath(scopeRoot, SK.INCLUDE_BY_SELECTOR).forEach(el => {
+      if (!onPath(el)) return;
       if (seen.has(el)) return;
       if (el.hasAttribute('data-shinkansen-translated')) return;
       // v1.10.1: 已被 Case F(walker 非-block 分支)處理過的 multi-segment block 容器
@@ -1855,7 +1899,8 @@
     //   - directTextLength >= 20(外語頁 >= 2):排除 <b>OK</b> 這類短強調。
     // push element unit(非 fragment),讓 <br> 走既有 sentinel 序列化、譯文注入回原 <b>(§15)。
     // 標記後代 seen,避免下方 leaf-content-anchor / leaf-content-div 重複收 <b> 內的 a/span。
-    scopeRoot.querySelectorAll(INLINE_PROSE_WRAPPER_SELECTOR).forEach(el => {
+    qsaOnPath(scopeRoot, INLINE_PROSE_WRAPPER_SELECTOR).forEach(el => {
+      if (!onPath(el)) return;
       if (seen.has(el)) return;
       if (el.hasAttribute('data-shinkansen-translated')) return;
       if (hasBlockAncestor(el)) return;
@@ -1874,11 +1919,12 @@
     });
 
     // v0.42: leaf content anchor 補抓
-    scopeRoot.querySelectorAll('a').forEach(a => {
+    qsaOnPath(scopeRoot, 'a').forEach(a => {
       // querySelectorAll('a') 也匹配 SVG <a>(SVGAElement)。SVG 元素沒有 innerText,
       // 收進 unit 後 translateUnits 序列化直接 TypeError 讓整頁翻譯失敗；非 HTML
       // 元素本就不該走 HTML 注入路徑，結構性排除。
       if (!(a instanceof HTMLElement)) return;
+      if (!onPath(a)) return;
       if (seen.has(a)) return;
       if (a.hasAttribute('data-shinkansen-translated')) return;
       if (hasBlockAncestor(a)) return;
@@ -1930,7 +1976,8 @@
     // querySelectorAll('div, span') 可能回傳幾萬個 element，新版只回傳數百個葉節點，
     // 後續 isVisible / textContent / isCandidateText 等檢查減少 95% 以上呼叫次數。
     // :has() 支援：Chrome 105+ / Firefox 121+ / Safari 15.4+，皆已是 stable 多年。
-    scopeRoot.querySelectorAll('div:not(:has(*)), span:not(:has(*))').forEach(d => {
+    qsaOnPath(scopeRoot, 'div:not(:has(*)), span:not(:has(*))').forEach(d => {
+      if (!onPath(d)) return;
       if (seen.has(d)) return;
       // v1.10.46: 容器已被 walker fragment 抽取(文字 run 已各自成 unit)→ 不得再整顆
       // 收成 element unit。fragment 只標 fragmentExtracted 不進 seen(容器可能還有其他
@@ -1986,13 +2033,15 @@
     // 2026-09-11：有界排除檢查用獨立 memo（以 td 父層為界，結論與 excludedMemo 的全程
     // 結論不同，不可共用）
     const gridExcludedMemo = new Map();
-    scopeRoot.querySelectorAll('table[role="grid"] td').forEach(td => {
+    qsaOnPath(scopeRoot, 'table[role="grid"] td').forEach(td => {
+      if (!onPath(td)) return;
       // v1.6.9: textContent 取代 innerText
       const tdText = (td.textContent || '').trim();
       if (tdText.length < 20) return;
       if (td.hasAttribute('data-shinkansen-translated')) return;
 
-      td.querySelectorAll('*').forEach(el => {
+      qsaOnPath(td, '*').forEach(el => {
+        if (!onPath(el)) return;
         if (seen.has(el)) return;
         if (el.hasAttribute('data-shinkansen-translated')) return;
         // 2026-09-11 code review §3.2-2：本 pass 用 querySelectorAll 繞過 TreeWalker，

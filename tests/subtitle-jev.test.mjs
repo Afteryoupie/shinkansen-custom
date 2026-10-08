@@ -141,3 +141,114 @@ test('Boundary evaluation is bounded and keeps original indices across batches',
     assert.equal(result.breakBefore[129], null);
   } finally { globalThis.fetch = original; }
 });
+
+
+test('ASR batch-tail overflow keeps timing and strips subtitle punctuation', () => {
+  const original = SK.stripSubtitlePunctuation;
+  SK.stripSubtitlePunctuation = text => text.replace(/[，。！]/g, '');
+  try {
+    const result = SK.ASR.parseLlmOutput('1|你好！\n2-4|第二句。', segs(['a', 'b', 'c']), 1500);
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), [
+      { s: 0, e: 500, t: '你好' }, { s: 500, e: 1500, t: '第二句' },
+    ]);
+  } finally { SK.stripSubtitlePunctuation = original; }
+});
+
+test('ASR reversed ranges are normalized before full coverage validation', () => {
+  const result = SK.ASR.parseLlmOutput('3-1|完整句', segs(['a', 'b', 'c']), 1500);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].s, 0);
+  assert.equal(result[0].e, 1500);
+});
+
+test('ASR gaps, overlaps, missing tails and invalid starts still trigger retries', () => {
+  for (const text of ['1|a\n3|c', '1-2|a\n2-3|b', '1-2|a', '4-5|a', '0-3|a', '1-4|a\n4|b', '']) {
+    assert.throws(() => SK.ASR.parseLlmOutput(text, segs(['a', 'b', 'c']), 1500), /ASR response/, text);
+  }
+});
+
+test('ASR legacy JSON retains complete timeline validation', () => {
+  const raw = segs(['a', 'b', 'c']);
+  const result = SK.ASR.parseLlmOutput('[{"s":0,"e":1500,"t":"完整句"}]', raw, 1500);
+  assert.equal(result[0].e, 1500);
+  assert.throws(() => SK.ASR.parseLlmOutput('[{"s":0,"e":500,"t":"缺尾"}]', raw, 1500), /incomplete legacy timeline/);
+});
+
+test('A stalled fetch that ignores abort still reaches the timeout fallback', { timeout: 500 }, async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Promise(() => {});
+    const engine = new JevDecisionEngine({ enabled: true, apiKey: 'test', timeoutMs: 10 });
+    const result = await engine.evaluateBatch(['human speech']);
+    assert.equal(result[0].is_valid, true);
+    assert.equal(result[0].source, 'fallback');
+    assert.equal(engine.lastError, 'timeout');
+  } finally { globalThis.fetch = original; }
+});
+
+test('Malformed JSON, wrong answer types and out-of-range probabilities retain speech', async () => {
+  const original = globalThis.fetch;
+  try {
+    const engine = new JevDecisionEngine({ enabled: true, apiKey: 'test' });
+    globalThis.fetch = async () => ({ ok: true, json: async () => { throw new SyntaxError('invalid JSON'); } });
+    assert.equal((await engine.evaluateBatch(['speech']))[0].source, 'fallback');
+    for (const answer of [{ type: 'noul', noul: 2 }, { type: 'noul', noul: -1 }, { type: 'noul', noul: NaN }, { type: 'choice', noul: 0 }]) {
+      globalThis.fetch = async () => ({ ok: true, json: async () => ({ answers: { valid_0: answer, needs_0: { type: 'noul', noul: 0 } } }) });
+      assert.equal((await engine.evaluateBatch(['speech']))[0].needs_translation, true);
+    }
+  } finally { globalThis.fetch = original; }
+});
+
+test('Filtering batches stay bounded and keep result order across requests', async () => {
+  const original = globalThis.fetch;
+  let requests = 0;
+  try {
+    globalThis.fetch = async (_, init) => {
+      requests++;
+      const body = JSON.parse(init.body);
+      assert.ok(Object.keys(body.questions).length <= 32);
+      return { ok: true, json: async () => ({ answers: Object.fromEntries(Object.keys(body.questions).map(key => [key, { type: 'noul', noul: 1 }])) }) };
+    };
+    const result = await new JevDecisionEngine({ enabled: true, apiKey: 'test' }).evaluateBatch(Array(37).fill('speech'));
+    assert.equal(requests, 3);
+    assert.equal(result.length, 37);
+    assert.ok(result.every(item => item.is_valid && item.needs_translation && item.source === 'jev'));
+  } finally { globalThis.fetch = original; }
+});
+
+test('Production refinement applies remote boundaries without mutating input and survives errors', async () => {
+  const original = SK.safeSendMessage;
+  const raw = segs(['we are done', 'now leave', 'together']);
+  try {
+    SK.safeSendMessage = async message => {
+      assert.equal(message.type, 'EVALUATE_YT_BOUNDARIES');
+      assert.equal(message.payload.segments.length, 3);
+      return { ok: true, breakBefore: [null, true, false] };
+    };
+    const refined = await SK._refineAsrBoundaries(raw, { jevEnabled: true, jevApiKey: 'test' });
+    assert.equal(refined[1].jevBreakBefore, true);
+    assert.equal(raw[1].jevBreakBefore, undefined);
+    assert.equal(SK._heuristicMergeAsr(refined, 'en').length, 2);
+    SK.safeSendMessage = async () => { throw Error('background unavailable'); };
+    assert.equal(await SK._refineAsrBoundaries(raw, { jevEnabled: true, jevApiKey: 'test' }), raw);
+    SK.safeSendMessage = async () => { throw Error('must not request'); };
+    assert.equal(await SK._refineAsrBoundaries(raw, { jevEnabled: true }), raw);
+  } finally { SK.safeSendMessage = original; }
+});
+
+test('Semantic continuation cannot remove safety limits or join long silences', () => {
+  const raw = segs(Array(70).fill('word'), Array(70).fill(false));
+  const result = SK._heuristicMergeAsr(raw, 'en');
+  assert.ok(result.length > 1);
+  assert.ok(result.every(item => item.text.split(' ').length <= 30));
+  assert.equal(result.flatMap(item => item.sourceSegs).length, raw.length);
+  const gap = segs(['first', 'second'], [null, false]);
+  gap[1].startMs = 10000;
+  assert.equal(SK._heuristicMergeAsr(gap, 'en').length, 2);
+});
+
+test('Production hint objects preserve native selection unless English preference is enabled', () => {
+  assert.equal(SK._chooseBestCaptionTrack(tracks, null, 'zh-TW', { preferEnglishAsr: true }).track.kind, 'asr');
+  assert.equal(SK._chooseBestCaptionTrack(tracks, null, 'zh-TW', { preferEnglishAsr: false }).track.languageCode, 'zh-TW');
+  assert.equal(SK._chooseBestCaptionTrack(tracks.slice(0, 2), null, 'zh-TW', { preferEnglishAsr: true }).track.languageCode, 'zh-TW');
+});
