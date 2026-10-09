@@ -9,6 +9,28 @@ tray = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tray)
 
 
+class IconTests(unittest.TestCase):
+    def test_request_lifecycle_and_disconnect(self):
+        self.assertEqual(tray.icon_state(dict(status='running', active_requests=0)), 'ready')
+        self.assertEqual(tray.icon_state(dict(status='running', active_requests=1)), 'running')
+        self.assertEqual(tray.icon_state(dict(status='running', active_requests=0)), 'ready')
+        self.assertEqual(tray.icon_state(dict(status='sleeping', active_requests=1)), 'sleeping')
+        self.assertEqual(tray.icon_state(dict(status='starting', active_requests=1)), 'starting')
+        self.assertEqual(tray.icon_state(None), 'offline')
+
+    def test_refresh_updates_expression_without_backend_status_change(self):
+        with patch.object(tray, 'RightClickIcon'), patch.object(tray, 'make_icon', side_effect=lambda s: s):
+            app = tray.LLMTray()
+            app.backend_pid = 123
+            for count, expected in [(0, 'ready'), (1, 'running'), (0, 'ready')]:
+                with patch.object(tray, 'request', return_value=dict(status='running', active_requests=count)):
+                    app._refresh()
+                self.assertEqual(app._tray.icon, expected)
+            with patch.object(tray, 'request', side_effect=OSError('offline')):
+                app._refresh()
+            self.assertEqual(app._tray.icon, 'offline')
+
+
 class CountdownTests(unittest.TestCase):
     def test_states_and_deadline(self):
         running = dict(status='running', idle_timeout=180, auto_sleep_enabled=True)

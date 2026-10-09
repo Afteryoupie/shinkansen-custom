@@ -50,18 +50,27 @@ def presentation(data, deadline, now):
     if status != 'running':
         return '休眠待命', '待命', '下一次請求會自動喚醒', 0
     if data.get('active_requests', 0):
-        return '運行就緒', '推論中', '完成請求後重新開始倒數', 0
+        return '運行中', '推論中', '完成請求後重新開始倒數', 0
     timeout = data.get('idle_timeout', 0)
     if not data.get('auto_sleep_enabled', True) or timeout <= 0:
-        return '運行就緒', '常駐', '自動休眠已關閉或此模型保持常駐', 0
+        return '準備就緒', '常駐', '自動休眠已關閉或此模型保持常駐', 0
     remaining = max(0, math.ceil(deadline - now))
-    return ('運行就緒', f'{remaining // 60:02d}:{remaining % 60:02d}',
+    return ('準備就緒', f'{remaining // 60:02d}:{remaining % 60:02d}',
             '後自動休眠 · 新請求會重設倒數' if remaining else '等待服務進入休眠',
             min(1, remaining / timeout))
 
 
+def icon_state(data):
+    if not data:
+        return 'offline'
+    status = data.get('status')
+    if status == 'running':
+        return 'running' if data.get('active_requests', 0) > 0 else 'ready'
+    return status if status in ('sleeping', 'starting') else 'offline'
+
+
 def make_icon(status):
-    state = status if status in ('running', 'sleeping', 'starting') else 'offline'
+    state = status if status in ('ready', 'running', 'sleeping', 'starting') else 'offline'
     path = Path(__file__).resolve().parents[1] / 'watchdog/assets' / f'watchdog-{state}.png'
     with Image.open(path) as source:
         image = source.convert('RGBA')
@@ -240,7 +249,7 @@ class LLMTray:
         except Exception:
             data = None
         with self.lock:
-            old_status = self.data.get('status') if self.data else None
+            old_status = icon_state(self.data)
             self.data = data
             if data:
                 self.deadline = time.monotonic() + data.get('idle_remaining', 0)
@@ -251,7 +260,7 @@ class LLMTray:
                     except (OSError, ValueError):
                         pass
             state, countdown, _, _ = presentation(data, self.deadline, time.monotonic())
-            status = data.get('status') if data else None
+            status = icon_state(data)
             if status != old_status:
                 self._tray.icon = make_icon(status)
             self._tray.title = ('LLM watchdog · ' + state + ' · ' + countdown)[:127]

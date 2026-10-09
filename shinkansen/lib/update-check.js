@@ -65,13 +65,9 @@ function parseVersion(v) {
  * 設計理由：頻繁的 patch 提示會讓使用者疲勞、忽略真正重要的版本。
  * @returns {boolean} 是否該顯示更新提示
  */
-function isWorthNotifying(latest, current) {
-  const a = parseVersion(latest);
-  const b = parseVersion(current);
-  if (a[0] > b[0]) return true;       // major 升
-  if (a[0] < b[0]) return false;
-  if (a[1] > b[1]) return true;       // minor 升
-  return false;                        // 同 major.minor，patch 級差異不提示
+function isWorthNotifying() {
+  // Custom builds are maintained independently of the upstream release channel.
+  return false;
 }
 
 /**
@@ -110,91 +106,8 @@ function isManualInstall() {
  * @returns {Promise<{ checked: boolean, hasUpdate: boolean, version?: string, releaseUrl?: string, error?: string }>}
  */
 export async function checkForUpdate() {
-  // MAS build:整套 update-check 不執行 — Apple Review Guideline 2.3.10 不准
-  // 引導使用者到 App Store 外下載 app;且同 Bundle ID 下載 Developer ID .pkg
-  // 會覆蓋 MAS 安裝。詳見 lib/distribution.js 註解。
-  if (IS_MAS_BUILD) {
-    return { checked: false, hasUpdate: false, error: 'MAS build — skipped' };
-  }
-  if (!isManualInstall()) {
-    return { checked: false, hasUpdate: false, error: 'CWS install — skipped' };
-  }
-  // 節流：距上次實際打 API 未滿 UPDATE_CHECK_MIN_INTERVAL_MS 直接跳過。
-  // lastAt 在未來（時鐘回撥）視為未節流，避免永久卡死。
-  const { [LAST_CHECK_KEY]: lastAt } = await browser.storage.local.get(LAST_CHECK_KEY);
-  const sinceLast = typeof lastAt === 'number' ? Date.now() - lastAt : Infinity;
-  if (sinceLast >= 0 && sinceLast < UPDATE_CHECK_MIN_INTERVAL_MS) {
-    return { checked: false, hasUpdate: false, error: 'throttled' };
-  }
-  const currentVersion = browser.runtime.getManifest().version;
-  let resp;
-  // v1.8.20: AbortController 15s timeout——MV3 SW 30s idle 上限,網路差時若不主動 abort
-  // 會被強制終止,fire-and-forget 訊息可能被吞;15s 留 buffer 給後續 JSON parse + storage 寫入
-  const ac = new AbortController();
-  const timeoutId = setTimeout(() => ac.abort(), 15_000);
-  try {
-    resp = await fetch(GITHUB_RELEASES_URL, {
-      headers: { 'Accept': 'application/vnd.github+json' },
-      signal: ac.signal,
-    });
-  } catch (err) {
-    clearTimeout(timeoutId);
-    const isAbort = err?.name === 'AbortError';
-    debugLog('warn', 'update-check', isAbort ? 'fetch timeout' : 'fetch failed', { error: err.message });
-    return { checked: false, hasUpdate: false, error: isAbort ? 'timeout' : err.message };
-  }
-  clearTimeout(timeoutId);
-  // 只要 GitHub 有回應（含 403 / 5xx）就記時間戳——節流的目的正是別在 rate limit 期間
-  // 繼續打；網路層失敗（offline / timeout）不記，下次觸發照常重試。
-  await browser.storage.local.set({ [LAST_CHECK_KEY]: Date.now() });
-  if (!resp.ok) {
-    debugLog('warn', 'update-check', `GitHub API ${resp.status}`, { status: resp.status });
-    return { checked: false, hasUpdate: false, error: `HTTP ${resp.status}` };
-  }
-  let json;
-  try {
-    json = await resp.json();
-  } catch (err) {
-    debugLog('warn', 'update-check', 'response not JSON', { error: err.message });
-    return { checked: false, hasUpdate: false, error: 'invalid JSON' };
-  }
-  const latestTag = json?.tag_name || '';
-  const latestVersion = String(latestTag).replace(/^v/, '');
-  // 200 + 合法 JSON 但缺 tag_name（GitHub API 異常回應）：latestVersion 空字串會被解析成
-  // [0,0,0] → 誤走 up-to-date 分支清掉先前偵測到的有效 updateAvailable。
-  // 比照 fetch 失敗分支：不動 storage，直接回報異常。
-  if (!latestVersion) {
-    debugLog('warn', 'update-check', 'response missing tag_name', {});
-    return { checked: false, hasUpdate: false, error: 'missing tag_name' };
-  }
-  const releaseUrl = json?.html_url || `https://github.com/jimmysu0309/shinkansen/releases/tag/${latestTag}`;
-
-  // v1.6.4: 只對 major / minor 升級提示——patch 級小修不打擾使用者。
-  if (isWorthNotifying(latestVersion, currentVersion)) {
-    const payload = {
-      version: latestVersion,
-      releaseUrl,
-      checkedAt: Date.now(),
-    };
-    // 不要直接覆蓋 lastNoticeShownDate，保留它（每日節流跨 update check）
-    const existing = await browser.storage.local.get(STORAGE_KEY);
-    const merged = {
-      ...payload,
-      lastNoticeShownDate: existing[STORAGE_KEY]?.lastNoticeShownDate || null,
-    };
-    await browser.storage.local.set({ [STORAGE_KEY]: merged });
-    debugLog('info', 'update-check', 'new version detected', {
-      current: currentVersion, latest: latestVersion,
-    });
-    return { checked: true, hasUpdate: true, version: latestVersion, releaseUrl };
-  }
-
-  // 沒有新版 → 清掉之前可能的 stale 紀錄
-  await browser.storage.local.remove(STORAGE_KEY);
-  debugLog('info', 'update-check', 'up-to-date', {
-    current: currentVersion, latest: latestVersion,
-  });
-  return { checked: true, hasUpdate: false, version: latestVersion };
+  await browser.storage.local.remove('updateAvailable');
+  return { checked: false, hasUpdate: false, error: 'Custom build — upstream updates disabled' };
 }
 
 /**

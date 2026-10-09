@@ -16,19 +16,57 @@ vm.runInNewContext(fs.readFileSync(new URL('../shinkansen/content-youtube.js', i
 const segs = (texts, hints = []) => texts.map((text, i) => ({ text, normText: text, startMs: i * 500, jevBreakBefore: hints[i] }));
 const tracks = [{ languageCode: 'zh-TW', kind: '' }, { languageCode: 'en', kind: '' }, { languageCode: 'en-US', kind: 'asr' }];
 
-test('English ASR preference overrides native target and manual English', () => {
-  const chosen = SK._chooseBestCaptionTrack(tracks, null, 'zh-TW', true);
-  assert.equal(chosen.track.kind, 'asr');
-  assert.equal(chosen.track.languageCode, 'en-US');
+test('Manual Chinese wins even with a legacy English ASR preference', () => {
+  for (const hints of [undefined, true, { preferEnglishAsr: true }]) {
+    const chosen = SK._chooseBestCaptionTrack(tracks, null, 'zh-TW', hints);
+    assert.equal(chosen.track, tracks[0]);
+    assert.equal(chosen.action, 'switch-to-native');
+  }
+});
+test('Manual English is translated without requiring an ASR track', () => {
+  const english = { languageCode: 'en-GB', kind: '' };
+  const chosen = SK._chooseBestCaptionTrack([english], null, 'zh-TW');
+  assert.equal(chosen.track, english);
+  assert.equal(chosen.sourceLanguage, 'en-GB');
   assert.equal(chosen.action, 'switch');
 });
-test('Default and unavailable English ASR retain original native preference', () => {
-  assert.equal(SK._chooseBestCaptionTrack(tracks, null, 'zh-TW').track.languageCode, 'zh-TW');
-  assert.equal(SK._chooseBestCaptionTrack(tracks.slice(0, 2), null, 'zh-TW', true).track.languageCode, 'zh-TW');
+test('Manual English wins over original and dubbed ASR', () => {
+  const list = [{languageCode:'zh-TW',kind:'asr'}, {languageCode:'ja',kind:'asr'}, {languageCode:'en',kind:''}];
+  assert.equal(SK._chooseBestCaptionTrack(list, null, 'zh-TW', { originalAudioLang:'ja' }).track, list[2]);
 });
-test('Active English ASR remains; YouTube auto-translation is removed', () => {
-  assert.equal(SK._chooseBestCaptionTrack(tracks, tracks[2], 'zh-TW', true).action, 'noop');
-  assert.equal(SK._chooseBestCaptionTrack(tracks, { ...tracks[2], translationLanguageCode: 'zh-TW' }, 'zh-TW', true).action, 'switch');
+test('Chinese variants and ambiguous Chinese precede English without skipping conversion', () => {
+  for (const languageCode of ['zh', 'zh-CN', 'zh-Hans']) {
+    const chinese = {languageCode, kind:''};
+    const chosen = SK._chooseBestCaptionTrack([tracks[1], chinese], null, 'zh-TW');
+    assert.equal(chosen.track, chinese);
+    assert.equal(chosen.action, 'switch');
+  }
+});
+test('Active manual English remains; YouTube auto-translation is removed', () => {
+  const list = tracks.slice(1);
+  assert.equal(SK._chooseBestCaptionTrack(list, list[0], 'zh-TW').action, 'noop');
+  assert.equal(SK._chooseBestCaptionTrack(list, { ...list[0], translationLanguageCode: 'zh-TW' }, 'zh-TW').action, 'switch');
+});
+test('Original-language ASR wins over dubbed English and conflicting default index', () => {
+  const list = [{languageCode:'en',kind:'asr'}, {languageCode:'ja',kind:'asr'}];
+  for (const ordered of [list, [...list].reverse()]) {
+    const chosen = SK._chooseBestCaptionTrack(ordered, null, 'zh-TW', { originalAudioLang:'ja-JP', defaultCaptionTrackIndex:ordered.indexOf(list[0]) });
+    assert.equal(chosen.track, list[1]);
+    assert.equal(chosen.sourceLanguage, 'ja');
+    assert.equal(chosen.action, 'switch');
+  }
+});
+test('ASR uses default hint or unique track, but never guesses among multiple languages', () => {
+  const list = [{languageCode:'en',kind:'asr'}, {languageCode:'ko',kind:'asr'}];
+  assert.equal(SK._chooseBestCaptionTrack(list, null, 'zh-TW', {defaultCaptionTrackIndex:1}).track, list[1]);
+  assert.equal(SK._chooseBestCaptionTrack([list[1]], null, 'zh-TW').track, list[1]);
+  assert.equal(SK._chooseBestCaptionTrack(list, null, 'zh-TW').track, undefined);
+  assert.equal(SK._chooseBestCaptionTrack([list[0]], null, 'zh-TW', {originalAudioLang:'ja'}).track, undefined);
+});
+test('Manual Chinese beats Chinese ASR regardless of array order', () => {
+  const list = [{languageCode:'zh-TW',kind:'asr'}, tracks[0]];
+  assert.equal(SK._chooseBestCaptionTrack(list, null, 'zh-TW').track, tracks[0]);
+  assert.equal(SK._chooseBestCaptionTrack(list, tracks[0], 'zh-TW').action, 'skip');
 });
 test('Confident boundaries survive compaction and preserve all original fragments/timing', () => {
   const raw = segs(['we finished the work', 'now we can leave', 'see you tomorrow'], [null, true, true]);
@@ -247,11 +285,7 @@ test('Semantic continuation cannot remove safety limits or join long silences', 
   assert.equal(SK._heuristicMergeAsr(gap, 'en').length, 2);
 });
 
-test('Production hint objects preserve native selection unless English preference is enabled', () => {
-  assert.equal(SK._chooseBestCaptionTrack(tracks, null, 'zh-TW', { preferEnglishAsr: true }).track.kind, 'asr');
-  assert.equal(SK._chooseBestCaptionTrack(tracks, null, 'zh-TW', { preferEnglishAsr: false }).track.languageCode, 'zh-TW');
-  assert.equal(SK._chooseBestCaptionTrack(tracks.slice(0, 2), null, 'zh-TW', { preferEnglishAsr: true }).track.languageCode, 'zh-TW');
-});test('Continuous two-second ASR fragments merge using speech end times', () => {
+test('Continuous two-second ASR fragments merge using speech end times', () => {
   const raw = [
     { text: 'When we started Mighty Car Mods we used', normText: 'a', startMs: 80, endMs: 4799 },
     { text: 'a Datsu Seor as our project car which', normText: 'b', startMs: 2159, endMs: 7200 },

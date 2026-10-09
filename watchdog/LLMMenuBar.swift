@@ -153,7 +153,7 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
         let remaining = max(0, Int(ceil(idleDeadline - ProcessInfo.processInfo.systemUptime)))
         modelsItem.title = currentModel
         modelsItem.toolTip = "點選切換模型"
-        panel.status.stringValue = !isConnected ? "未連線" : starting ? "正在載入" : running ? "運行中" : "休眠待命"
+        panel.status.stringValue = !isConnected ? "未連線" : starting ? "正在載入" : running ? (activeRequests > 0 ? "處理中" : "準備就緒") : "休眠待命"
         panel.status.textColor = isConnected && running ? .systemGreen : .secondaryLabelColor
         panel.progress.isHidden = true
         if !isConnected {
@@ -212,38 +212,54 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    // Template artwork follows the system menu bar appearance; the state glyph
-    // remains legible in monochrome and does not depend on color perception.
+    // Left-facing profile approved in the design preview. Transparent template
+    // artwork follows macOS appearance; expression alone communicates activity.
     private func guardianIcon(status: String) -> NSImage {
-        let image = NSImage(size: NSSize(width: 28, height: 18), flipped: false) { _ in
-            NSColor.black.setFill()
-            let face = NSBezierPath(roundedRect: NSRect(x: 1, y: 3, width: 18, height: 12), xRadius: 4, yRadius: 4)
-            face.fill()
-            for points in [[NSPoint(x: 1, y: 12), NSPoint(x: 1, y: 18), NSPoint(x: 8, y: 14)],
-                           [NSPoint(x: 12, y: 14), NSPoint(x: 19, y: 18), NSPoint(x: 19, y: 12)]] {
-                let ear = NSBezierPath(); ear.move(to: points[0]); ear.line(to: points[1]); ear.line(to: points[2]); ear.close(); ear.fill()
+        let awake = status == "running" || status == "starting"
+        let speaking = status == "running" && activeRequests > 0
+        let image = NSImage(size: NSSize(width: 24, height: 18), flipped: false) { _ in
+            guard let c = NSGraphicsContext.current?.cgContext else { return false }
+            c.saveGState()
+            defer { c.restoreGState() }
+            c.translateBy(x: 0, y: 18)
+            c.scaleBy(x: 0.375, y: -0.375)
+            c.setFillColor(NSColor.black.cgColor)
+            c.setStrokeColor(NSColor.black.cgColor)
+            c.setLineWidth(2.6)
+            c.setLineCap(.round)
+            c.setLineJoin(.round)
+            // Forehead, long muzzle and rounded lower jaw.
+            c.move(to: CGPoint(x: 5, y: 21))
+            c.addCurve(to: CGPoint(x: 21, y: 12), control1: CGPoint(x: 16, y: 19), control2: CGPoint(x: 19, y: 18))
+            c.addCurve(to: CGPoint(x: 45, y: 5), control1: CGPoint(x: 23, y: 3), control2: CGPoint(x: 37, y: 1))
+            c.addCurve(to: CGPoint(x: 50, y: 13), control1: CGPoint(x: 49, y: 7), control2: CGPoint(x: 49, y: 10))
+            c.strokePath()
+            c.move(to: CGPoint(x: 5, y: 21))
+            if speaking {
+                c.addCurve(to: CGPoint(x: 18, y: 31), control1: CGPoint(x: 3, y: 27), control2: CGPoint(x: 9, y: 31))
+                c.addCurve(to: CGPoint(x: 12, y: 37), control1: CGPoint(x: 17, y: 34), control2: CGPoint(x: 15, y: 36))
+                c.addCurve(to: CGPoint(x: 26, y: 40), control1: CGPoint(x: 15, y: 42), control2: CGPoint(x: 23, y: 40))
+                c.addCurve(to: CGPoint(x: 32, y: 44), control1: CGPoint(x: 29, y: 40), control2: CGPoint(x: 31, y: 42))
+            } else {
+                c.addCurve(to: CGPoint(x: 15, y: 36), control1: CGPoint(x: 3, y: 27), control2: CGPoint(x: 8, y: 34))
+                c.addCurve(to: CGPoint(x: 30, y: 43), control1: CGPoint(x: 21, y: 39), control2: CGPoint(x: 27, y: 35))
             }
-            if let context = NSGraphicsContext.current?.cgContext {
-                context.saveGState(); context.setBlendMode(.clear)
-                let eyeHeight: CGFloat = status == "sleeping" ? 1 : 3
-                context.fill(CGRect(x: 5, y: 10, width: 3, height: eyeHeight))
-                context.fill(CGRect(x: 12, y: 10, width: 3, height: eyeHeight))
-                context.fill(CGRect(x: 8, y: 6, width: 4, height: 2))
-                context.restoreGState()
-            }
-            let state = NSBezierPath()
-            state.lineWidth = 1.5
-            state.lineCapStyle = .round
-            NSColor.black.setStroke()
-            switch status {
-            case "running":
-                state.move(to: NSPoint(x: 22, y: 5)); state.line(to: NSPoint(x: 22, y: 13)); state.line(to: NSPoint(x: 28, y: 9)); state.close(); state.fill()
-            case "starting":
-                state.move(to: NSPoint(x: 22, y: 5)); state.line(to: NSPoint(x: 28, y: 5)); state.line(to: NSPoint(x: 22, y: 13)); state.line(to: NSPoint(x: 28, y: 13)); state.close(); state.stroke()
-            case "sleeping":
-                state.move(to: NSPoint(x: 23, y: 6)); state.line(to: NSPoint(x: 23, y: 11)); state.move(to: NSPoint(x: 26, y: 6)); state.line(to: NSPoint(x: 26, y: 11)); state.stroke()
-            default:
-                state.move(to: NSPoint(x: 23, y: 6)); state.line(to: NSPoint(x: 27, y: 10)); state.move(to: NSPoint(x: 23, y: 10)); state.line(to: NSPoint(x: 27, y: 6)); state.stroke()
+            c.strokePath()
+            // Floppy ear, deliberately solid for recognition at menu-bar size.
+            c.move(to: CGPoint(x: 45, y: 6))
+            c.addCurve(to: CGPoint(x: 35, y: 25), control1: CGPoint(x: 38, y: 7), control2: CGPoint(x: 38, y: 14))
+            c.addCurve(to: CGPoint(x: 42, y: 44), control1: CGPoint(x: 33, y: 34), control2: CGPoint(x: 36, y: 43))
+            c.addCurve(to: CGPoint(x: 60, y: 30), control1: CGPoint(x: 51, y: 47), control2: CGPoint(x: 62, y: 38))
+            c.addCurve(to: CGPoint(x: 50, y: 9), control1: CGPoint(x: 56, y: 23), control2: CGPoint(x: 54, y: 14))
+            c.addCurve(to: CGPoint(x: 45, y: 6), control1: CGPoint(x: 48, y: 7), control2: CGPoint(x: 46, y: 6))
+            c.fillPath()
+            c.fillEllipse(in: CGRect(x: 3, y: 20, width: 7, height: 6))
+            if awake {
+                c.fillEllipse(in: CGRect(x: 23, y: 14, width: 7, height: 8))
+            } else {
+                c.move(to: CGPoint(x: 22, y: 17))
+                c.addCurve(to: CGPoint(x: 29, y: 19), control1: CGPoint(x: 24, y: 20), control2: CGPoint(x: 27, y: 20))
+                c.strokePath()
             }
             return true
         }
@@ -255,7 +271,7 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
         guard let button = statusItem.button else { return }
         button.title = ""
         button.image = guardianIcon(status: status)
-        let labels = ["running": "運行就緒", "starting": "正在載入", "sleeping": "休眠待命", "disconnected": "尚未連線"]
+        let labels = ["running": activeRequests > 0 ? "運行中 · 處理請求" : "準備就緒", "starting": "正在載入", "sleeping": "休眠待命", "disconnected": "尚未連線"]
         let label = "LLM watchdog · \(labels[status] ?? "狀態未知") · \(currentModel)"
         button.toolTip = label
         button.setAccessibilityLabel(label)

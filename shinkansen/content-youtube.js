@@ -1139,24 +1139,37 @@
     let n = Math.ceil(total / SK.ASR_CUE_MAX_CHARS);
     n = Math.min(n, Math.max(1, Math.floor(durMs / SK.ASR_CUE_MIN_PIECE_MS)));
     if (n <= 1) return whole;
-    const SEARCH = 12;   // 理想切點左右找標點的範圍(字元)
+    // 空格常是去除標點後留下的語意分隔；無空格中文以詞界避免拆開詞語。
+    // 只在本片及剩餘片數都能容納的範圍尋找，避免最後剩「很多」這類短尾。
+    const wordEnds = new Set();
+    try {
+      const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+      for (const part of segmenter.segment(t)) wordEnds.add(part.index + part.segment.length);
+    } catch (_) { /* 舊平台仍可使用標點、空格與既有英數詞界保護 */ }
     const pieces = [];
     let pos = 0;
+    const limit = Math.max(SK.ASR_CUE_MAX_CHARS, Math.ceil(total / n));
     for (let k = 1; k < n; k++) {
-      const ideal = Math.round((total * k) / n);
+      const remaining = n - k;
+      const ideal = pos + Math.round((total - pos) / (remaining + 1));
+      const lo = Math.max(pos + 1, total - remaining * limit);
+      const hi = Math.min(total - remaining, pos + limit);
       let cut = -1;
-      let bestDist = Infinity;
-      const lo = Math.max(pos + 1, ideal - SEARCH);
-      const hi = Math.min(total - 2, ideal + SEARCH);
+      let bestScore = Infinity;
       for (let i = lo; i <= hi; i++) {
-        if (_isSentencePunctAt(t, i)) {
-          const d = Math.abs(i + 1 - ideal);
-          if (d < bestDist) { bestDist = d; cut = i + 1; }
-        }
+        // 不拆英數單字、組合 emoji 或中文詞；找不到詞界才使用下面的保底。
+        const punct = _isSentencePunctAt(t, i - 1);
+        const space = /\s/.test(t[i - 1]);
+        if (!punct && !space && !wordEnds.has(i)) continue;
+        const transition = /^(?:無論如何|不過|然而|但是|因此|所以|另一方面)/.test(t.slice(i));
+        const trailingTransition = /(?:無論如何|不過|然而|但是|因此|所以|另一方面)\s*$/.test(t.slice(pos, i));
+        const score = Math.abs(i - ideal) + (transition ? -9 : punct ? -6 : space ? -4 : 2)
+          + (trailingTransition ? 12 : 0);
+        if (score < bestScore) { bestScore = score; cut = i; }
       }
-      if (cut < 0) cut = ideal;          // 附近沒標點 → 均分硬切(寧可切也不要第三行)
-      // v2.0.63:切點落在拉丁單字／數字 run 內時吸附到 run 邊緣(Union 不切成 Un|ion)
-      cut = _snapCutOutOfWord(t, cut, pos, total);
+      if (cut < 0) cut = _snapCutOutOfWord(t, ideal, pos, total);
+      // UTF-16 的保底切點不能落在 surrogate pair 中間。
+      if (cut > 0 && /[\uD800-\uDBFF]/.test(t[cut - 1]) && /[\uDC00-\uDFFF]/.test(t[cut])) cut++;
       if (cut <= pos || cut >= total) continue;
       pieces.push(t.slice(pos, cut));
       pos = cut;
@@ -1412,34 +1425,10 @@
   //       不是原始 ASR，而是 YT 已自翻譯後的字幕文字。靠 `/api/timedtext` URL `lang` 參數
   //       也認不出來（URL `lang=en` + `tlang=zh-Hans`,Shinkansen 認 en 但 body 是 zh-Hans）。
   //
-  // 三優先序（taken from caption track metadata, not text content):
-  //   1) target lang 原生 track（任 kind,zh-TW target → zh-TW / zh-Hant / zh-HK)
-  //      → activeTrack 已是該 native 軌(同 kind 且沒 translation)→ action='skip'
-  //         (YT 已在顯示原生中文,Shinkansen 不必動)
-  //      → activeTrack 不是該 native 軌(常見:影片同時有 native EN + native zh-Hant,
-  //         YT 帳號預設顯示 EN)→ action='switch-to-native' 主動切到 native 軌
-  //         單語:caller 切完 stopYouTubeTranslation(讓 YT 顯示原生中文)
-  //         雙語:caller 切完不 stop(留 Shinkansen 監聽,使用者後續手動切到非 target
-  //              軌時自動翻譯;_applyBilingualMode 在 captionLang=target 時不藏 native CC)
-  //   1.5) 模糊 base-lang 原生候選(zh-TW / zh-CN target 的 `zh` 軌,手動優先於 ASR)
-  //      → activeTrack 已是該軌(同 kind 無 translation)→ action='noop'(下游內容偵測接手)
-  //      → 否則 action='switch'(非 switch-to-native:繁簡未定,不可盲目 stop,
-  //         切軌後由 _shouldSkipBecauseAlreadyInTarget 內容偵測決定 skip 或翻譯)
-  //   2) 影片原始語 manual track（kind=''，creator-uploaded）→ action='switch'
-  //   3) 影片原始語 ASR track（kind='asr'）→ action='switch'
-  //   都沒命中 / activeTrack 已對得上目標 → action='noop'，留 YT 既有行為
-  //
-  // 影片原始語從 captionTracks 的「原音 ASR 軌」languageCode 動態決定（_pickSourceAsrTrack）：
-  //   - 只有一條 kind='asr' → 就是它（一般影片，語言對應原始口說語）
-  //   - 多條 kind='asr'（自動配音影片：每條配音音軌各一條 ASR，順序每次載入不同）→ 依
-  //     bridge 帶來的 YouTube 訊號挑：hints.defaultCaptionTrackIndex（原音軌推薦字幕 index）
-  //     → hints.originalAudioLang（原音軌語言）→ 都沒有才退回第一條（舊行為，並記 log）
-  //   沒 ASR 軌（罕見：創作者只上手動字幕沒讓 YT 跑 ASR）→ 無法可靠決定 sourceLang → noop。
-  //   非原音的 ASR 軌（配音 ASR = 機器配音再辨識的二手字幕）不當 P1 原生候選。
-  //
-  // Pure function：單純看 tracks + activeTrack + targetLanguage + hints，不 mutate STATE、不 dispatch。
-  // 副作用由 _runCaptionTrackChooser 包裹 + activate flow 決定。
-  // 回傳的 sourceLanguage 給 caller 傳遞給 background ASR prompt {sourceLanguage} placeholder 用。
+  // 人工字幕優先：目標語（中文含繁簡）→ 英文 → 原音人工字幕 → 原音 ASR。
+  // 精確符合目標語時直接顯示；中文繁簡不一致或標記不明時交給既有內容偵測／轉換。
+  // 自動配音的 ASR 不能取代人工中文／英文。多條 ASR 依原音提示選擇，不任取第一條。
+  // Pure function；切換播放器的副作用由 _runCaptionTrackChooser 處理。
   const _TARGET_NATIVE_LANGS = {
     'zh-TW': ['zh-TW', 'zh-Hant', 'zh-HK'],
     'zh-CN': ['zh-CN', 'zh-Hans'],
@@ -1467,122 +1456,60 @@
     return _TARGET_NATIVE_LANGS[targetLanguage] || [targetLanguage];
   }
 
-  // 從 tracks 挑出「影片原音」的 ASR 軌（源語推導的單一資料源）。
-  // 回傳 { track: <ASR track> | null, asrCount, via: 'single' | 'default-index' | 'audio-lang' | 'first-fallback' | 'none' }
-  // hints（來自 content-youtube-main.js player response bridge，皆可缺）：
-  //   defaultCaptionTrackIndex — audioTracks[defaultAudioTrackIndex].defaultCaptionTrackIndex
-  //   originalAudioLang        — adaptiveFormats 內 audioIsDefault 音軌的語言（如 'en-US'）
+  // 原音語言優先於預設字幕索引，避免帳號或配音的預設選擇覆蓋原音。
   function _pickSourceAsrTrack(tracks, hints) {
     const asrTracks = tracks.filter(t => t.kind === 'asr');
-    if (asrTracks.length === 0) return { track: null, asrCount: 0, via: 'none' };
-    if (asrTracks.length === 1) return { track: asrTracks[0], asrCount: 1, via: 'single' };
-    // 多條 ASR = 自動配音影片。順序不可信（每次載入不同），必須靠 YouTube 訊號。
+    const count = asrTracks.length;
+    if (!count) return { track: null, asrCount: 0, via: 'none' };
     const h = hints || {};
-    const byIdx = Number.isInteger(h.defaultCaptionTrackIndex) ? tracks[h.defaultCaptionTrackIndex] : null;
-    if (byIdx && byIdx.kind === 'asr') return { track: byIdx, asrCount: asrTracks.length, via: 'default-index' };
     if (typeof h.originalAudioLang === 'string' && h.originalAudioLang) {
       const full = h.originalAudioLang.toLowerCase();
       const base = full.split('-')[0];
-      // 先全碼（en-US = en-US），再 base-lang（en-US ↔ en）；ASR 軌 languageCode 與音軌 id 的
-      // 區域標記不一定一致（實測音軌 en-US.4 對 ASR 軌 `en`）
       const byLang = asrTracks.find(t => (t.languageCode || '').toLowerCase() === full)
-                  || asrTracks.find(t => (t.languageCode || '').toLowerCase().split('-')[0] === base);
-      if (byLang) return { track: byLang, asrCount: asrTracks.length, via: 'audio-lang' };
+        || asrTracks.find(t => (t.languageCode || '').toLowerCase().split('-')[0] === base);
+      return { track: byLang || null, asrCount: count, via: byLang ? 'audio-lang' : 'source-unavailable' };
     }
-    return { track: asrTracks[0], asrCount: asrTracks.length, via: 'first-fallback' };
+    const byIdx = Number.isInteger(h.defaultCaptionTrackIndex) ? tracks[h.defaultCaptionTrackIndex] : null;
+    if (byIdx?.kind === 'asr') return { track: byIdx, asrCount: count, via: 'default-index' };
+    if (count === 1) return { track: asrTracks[0], asrCount: 1, via: 'single' };
+    return { track: null, asrCount: count, via: 'unknown-source' };
   }
 
   SK._pickSourceAsrTrack = _pickSourceAsrTrack;
 
-  // tracks: [{ languageCode, kind: '' | 'asr', isTranslatable?, vssId?, name? }]
-  // activeTrack: { languageCode, kind, translationLanguageCode } | null
-  // targetLanguage: 'zh-TW' / 'zh-CN' / 'en' / ...
-  // hints: { defaultCaptionTrackIndex?, originalAudioLang? }（見 _pickSourceAsrTrack，可省略）
-  // 回傳： { action: 'skip' | 'switch' | 'switch-to-native' | 'noop', track?: <選中的 track>, reason, sourceVia? }
   function _chooseBestCaptionTrack(tracks, activeTrack, targetLanguage, hints) {
     if (!Array.isArray(tracks) || tracks.length === 0) {
       return { action: 'noop', reason: 'no-tracks' };
     }
-    if (typeof hints === 'boolean') hints = { preferEnglishAsr: hints };
-    if (hints?.preferEnglishAsr === true) {
-      const english = tracks.find(track => track.kind === 'asr' && /^en(?:-|$)/i.test(track.languageCode || ''));
-      if (english) {
-        const active = activeTrack?.kind === 'asr' && activeTrack.languageCode === english.languageCode && !activeTrack.translationLanguageCode;
-        return { action: active ? 'noop' : 'switch', track: english, reason: 'prefer-english-asr' };
-      }
-    }
     const targetLangs = _resolveTargetNativeLangs(targetLanguage);
-    const sourceAsr = _pickSourceAsrTrack(tracks, hints);
-    // 非原音的 ASR（配音 ASR）不算任何語言的原生候選：P1 / P1.5 只看手動軌 + 原音 ASR
-    const isNativeCandidate = t => t.kind !== 'asr' || t === sourceAsr.track;
-
-    // P1: target lang 原生 track（手動任意 / ASR 限原音）。不分單語/雙語都優先切到 native target；
-    // bilingualMode 下使用者後續手動切到非 target 軌時 Shinkansen 才接管翻譯+overlay。
-    const p1 = tracks.find(t => targetLangs.includes(t.languageCode) && isNativeCandidate(t));
-    if (p1) {
-      const activeIsP1 = activeTrack
-        && activeTrack.languageCode === p1.languageCode
-        && (activeTrack.kind || '') === (p1.kind || '')
-        && !activeTrack.translationLanguageCode;
-      if (activeIsP1) {
-        return { action: 'skip', track: p1, reason: 'p1-active-already-native' };
-      }
-      return { action: 'switch-to-native', track: p1, reason: 'p1-switch-to-native' };
-    }
-
-    // P1.5: 模糊 base-lang 原生候選(zh-TW / zh-CN target 的 `zh` 軌,手動優先於 ASR)。
-    // metadata 分不出繁簡,不能走 'switch-to-native'(單語 caller 會盲目 stop,若軌
-    // 實際是簡中就留一版沒翻的簡中);改回 'switch' 切過去,由下游
-    // _shouldSkipBecauseAlreadyInTarget 抽字幕內容補判:已是 target → skip 顯示原生,
-    // 不是(如簡中對 zh-TW)→ 照常翻譯。
-    // 位置在 ASR 推導之前:有 `zh` 軌時優先用它(創作者人工中文字幕品質高於
-    // 「切到源語 ASR 再 LLM 翻譯」,且省 token);也涵蓋「只有一條 `zh` 手動軌、
-    // 沒 ASR 軌」的影片(否則 no-source-asr-track noop,YT 帳號 auto-translate
-    // 偏好會讓字幕停在英文自翻軌,Shinkansen 再把英文翻回中文)。
-    const ambigSet = _AMBIGUOUS_LANGS_BY_TARGET[targetLanguage];
-    if (ambigSet) {
-      const p1b = tracks.find(t => ambigSet.has(t.languageCode) && (!t.kind || t.kind === ''))
-               || tracks.find(t => ambigSet.has(t.languageCode) && isNativeCandidate(t));
-      if (p1b) {
-        const activeIsP1b = activeTrack
-          && activeTrack.languageCode === p1b.languageCode
-          && (activeTrack.kind || '') === (p1b.kind || '')
-          && !activeTrack.translationLanguageCode;
-        if (activeIsP1b) {
-          return { action: 'noop', track: p1b, sourceLanguage: p1b.languageCode, reason: 'p1b-ambiguous-native-active' };
-        }
-        return { action: 'switch', track: p1b, sourceLanguage: p1b.languageCode, reason: 'p1b-ambiguous-native' };
-      }
-    }
-
-    // 從原音 ASR track 動態推導影片原始語（多條 ASR 時由 _pickSourceAsrTrack 依 hints 挑）
-    const asrTrack = sourceAsr.track;
-    if (!asrTrack) {
-      // 沒 ASR 軌 → 無法可靠決定 sourceLang（rare：創作者只上手動字幕）→ noop
-      return { action: 'noop', reason: 'no-source-asr-track' };
-    }
-    const sourceLang = asrTrack.languageCode;
-
-    // P2: 原始語 manual track（creator-uploaded，品質高過 ASR）
-    const p2 = tracks.find(t => t.languageCode === sourceLang && (!t.kind || t.kind === ''));
-    const desired = p2 || asrTrack;
-
-    // 當前 active track 已是目標 track 且沒被自翻譯 → 不必再切
-    const alreadyOnTarget = activeTrack
-      && activeTrack.languageCode === desired.languageCode
-      && (activeTrack.kind || '') === (desired.kind || '')
+    const manual = tracks.filter(t => t.kind !== 'asr');
+    const isActive = t => activeTrack
+      && activeTrack.languageCode === t.languageCode
+      && (activeTrack.kind || '') === (t.kind || '')
       && !activeTrack.translationLanguageCode;
-    if (alreadyOnTarget) {
-      return { action: 'noop', track: desired, sourceLanguage: sourceLang, reason: 'already-on-target', sourceVia: sourceAsr.via };
-    }
-
-    return {
-      action: 'switch',
-      track: desired,
-      sourceLanguage: sourceLang,
-      reason: p2 ? 'p2-source-manual' : 'p3-source-asr',
-      sourceVia: sourceAsr.via,
+    const choose = (track, reason, sourceVia) => {
+      const native = targetLangs.includes(track.languageCode);
+      return {
+        action: native ? (isActive(track) ? 'skip' : 'switch-to-native') : (isActive(track) ? 'noop' : 'switch'),
+        track, sourceLanguage: track.languageCode, reason, sourceVia,
+      };
     };
+    const native = manual.find(t => targetLangs.includes(t.languageCode));
+    if (native) return choose(native, 'p1-native-manual');
+    if (/^zh(?:-|$)/i.test(targetLanguage)) {
+      const chinese = manual.find(t => /^zh(?:-|$)/i.test(t.languageCode || ''));
+      if (chinese) return choose(chinese, 'p1-chinese-manual');
+    }
+    const english = manual.find(t => /^en(?:-|$)/i.test(t.languageCode || ''));
+    if (english) return choose(english, 'p2-english-manual');
+
+    const sourceAsr = _pickSourceAsrTrack(tracks, hints);
+    const sourceLang = hints?.originalAudioLang || sourceAsr.track?.languageCode;
+    const sourceManual = sourceLang && (manual.find(t => t.languageCode?.toLowerCase() === sourceLang.toLowerCase())
+      || manual.find(t => t.languageCode?.toLowerCase().split('-')[0] === sourceLang.toLowerCase().split('-')[0]));
+    if (sourceManual) return choose(sourceManual, 'p3-source-manual', sourceAsr.via);
+    if (sourceAsr.track) return choose(sourceAsr.track, 'p4-source-asr', sourceAsr.via);
+    return { action: 'noop', reason: 'no-source-asr-track', sourceVia: sourceAsr.via };
   }
 
   SK._chooseBestCaptionTrack = _chooseBestCaptionTrack;
@@ -1607,7 +1534,6 @@
     const hints = {
       defaultCaptionTrackIndex: detail.defaultCaptionTrackIndex,
       originalAudioLang:        detail.originalAudioLang,
-      preferEnglishAsr:         SK.YT?.config?.preferEnglishAsr === true,
     };
     const decision = _chooseBestCaptionTrack(detail.captionTracks, detail.activeTrack, targetLanguage, hints);
     const asrCount = Array.isArray(detail.captionTracks) ? detail.captionTracks.filter(t => t.kind === 'asr').length : 0;
@@ -1626,8 +1552,8 @@
       hintDefaultIdx: hints.defaultCaptionTrackIndex,
       hintAudioLang:  hints.originalAudioLang,
     });
-    if (asrCount > 1 && decision.sourceVia === 'first-fallback') {
-      SK.sendLog('warn', 'youtube', 'chooser: multi-ASR video without usable source hints, fell back to first ASR track', { asrCount });
+    if (asrCount > 1 && decision.sourceVia === 'unknown-source') {
+      SK.sendLog('warn', 'youtube', 'chooser: original ASR language is unknown; did not select a dubbed track', { asrCount });
     }
 
     // Step 3:'switch' 或 'switch-to-native' 命中 → dispatch setOption bridge + 等回應

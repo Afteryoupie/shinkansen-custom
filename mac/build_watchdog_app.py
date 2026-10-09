@@ -25,8 +25,9 @@ def main():
     subprocess.run(['swiftc', '-O', str(repo / 'watchdog/LLMMenuBar.swift'), '-o', str(binary)], check=True)
     shutil.copy2(repo / 'watchdog/assets/guardian.icns', resources / 'guardian.icns')
     launcher = macos / 'llm-watchdog'
-    command = [sys.executable, str(repo / 'mac/launch_watchdog.py'), str(repo), str(binary)]
-    launcher.write_text('#!/bin/sh\nexec ' + shlex.join(command) + '\n', encoding='utf-8')
+    command = [sys.executable, str(repo / 'mac/launch_watchdog.py'), str(repo)]
+    launcher.write_text('#!/bin/sh\nAPP_RESOURCES="$(cd "$(dirname "$0")/../Resources" && pwd)"\nexec '
+                        + shlex.join(command) + ' "$APP_RESOURCES/LLMMenuBar"\n', encoding='utf-8')
     launcher.chmod(0o755)
     with (app / 'Contents/Info.plist').open('wb') as stream:
         plistlib.dump(dict(CFBundleName='LLM watchdog', CFBundleDisplayName='LLM watchdog',

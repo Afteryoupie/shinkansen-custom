@@ -3,7 +3,7 @@
 ## Direction
 Warm paper (#F5F3EC), ink (#242620), vermilion (#BF421F). Editorial hierarchy with a quiet utility interface: large state-aware heading, model status strip, direct engine controls, and a connection/energy sidebar. System fonts keep Traditional Chinese crisp and work offline. Desktop scope only, as requested; checked at 1024, 1280 and 1440 px. At narrower desktop widths, the connection panel moves beneath the models.
 
-The original double-dialogue symbol appears in the app icon, dashboard, and optically simplified macOS menu bar icon. Menu state uses shape, not color alone. Native SF Symbols provide menu commands; inline SVG provides web controls. No third-party frontend dependencies or remote font requests.
+The approved left-facing dog profile appears in the app icon, dashboard, and optically simplified macOS menu bar icon. Menu state uses shape, not color alone. Native SF Symbols provide menu commands; inline SVG provides web controls. No third-party frontend dependencies or remote font requests.
 
 ## Reference research
 These are quality references, not a claim that this implementation has won an award or reproduces a winning site.
@@ -47,3 +47,9 @@ Startup regression: both status handlers and the background idle checker could s
 
 
 Windows port and the renamed macOS app build are documented in [WINDOWS.md](WINDOWS.md).
+
+### Left-facing dog expressions (2026-10-09)
+
+Approved reference: `dog-profile-approved.png`. The dog closes its eye during sleep/disconnection, opens its eye while ready/loading, and opens its jaw only while `active_requests > 0` on a running model. Status text distinguishes loading from ready and disconnection from sleep. The jaw is static, so activity remains visible without continuous motion. Native macOS artwork is a transparent template, while tray/app assets retain a white face for contrast.
+
+Verified: Swift optimized compilation; native menu regression including image changes on inference start/completion and stale-activity clearing on disconnect; existing tracking-mode countdown and menu identity tests; dashboard JavaScript syntax and seven state transitions; Windows presentation and icon-refresh tests with its native tray mocked on macOS. Actual Windows shell rendering still requires Windows. The generated preview includes 16/24/32 px samples on light and dark backgrounds.

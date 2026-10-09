@@ -117,23 +117,6 @@ body {
 
 h1 { margin: 0 0 16px; font-size: 22px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .page-title-icon { width: 32px; height: 32px; flex-shrink: 0; }
-/* iOS / iPadOS 上架提示 pill(h1 右端;iOS build 由 options.js 隱藏) */
-.ios-promo {
-  margin-left: auto;
-  align-self: center;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: var(--accent-primary);
-  color: var(--accent-fg);
-  text-decoration: none;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: background-color .15s ease;
-}
-.ios-promo:hover { background: var(--accent-hover); }
 h2 { margin: 28px 0 12px; font-size: 15px; color: var(--accent-primary); border-bottom: 1px solid var(--border-divider); padding-bottom: 6px; }
 
 section { margin-bottom: 20px; }
@@ -1582,3 +1565,6 @@ label.opacity-row small {
   background: var(--accent-primary);
 }
 
+
+/* First visit: reveal controls only after the saved theme has been read. */
+:root[data-theme-pending] body { visibility: hidden; }

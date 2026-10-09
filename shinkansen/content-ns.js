@@ -285,10 +285,8 @@ if (window.__shinkansen_loaded) {
   // _collectAsrWindowSegs)。real-data(cXot3z7ZPOo):被 150s 邊界切斷的句子到句尾
   // 標點需再收 4 條片段(+10.8s),12s 上限涵蓋這類長句,同時擋住無標點軌的無界延伸
   SK.ASR_WINDOW_MAX_TAIL_EXTEND_MS = 12000;
-  // v2.0.54:LLM 合句譯文超過此字元數時 code 端保底拆成多個顯示 cue(詳見
-  // content-youtube.js _splitLongAsrCue)。prompt 已要求單句 ≤35 全形字,此值取 40
-  // 留容差:36-40 字仍是兩行內,不值得切;>40 在窄播放器會折出第三行
-  SK.ASR_CUE_MAX_CHARS = 40;
+  // 長譯文以短語分段顯示；24 字以單行閱讀為目標，實際換行仍依播放器寬度。
+  SK.ASR_CUE_MAX_CHARS = 24;
   // 拆分後每片最短顯示時長;cue 時長不夠拆 N 片時自動減片數,避免字幕閃跳
   SK.ASR_CUE_MIN_PIECE_MS = 1200;
   // 使用來源字幕時間。固定提前一秒會在短句或停頓時顯示下一句。
@@ -1213,18 +1211,8 @@ if (window.__shinkansen_loaded) {
 
   // v1.6.5: 鏡像 lib/update-check.js 的 isWorthNotifying（content script 不能 import）。
   // 修改此函式時必須同步更新 lib/update-check.js。
-  function isWorthNotifying(latest, current) {
-    const parse = v => {
-      const c = String(v || '').replace(/^v/, '').split('-')[0];
-      const p = c.split('.').map(s => parseInt(s, 10) || 0);
-      while (p.length < 3) p.push(0);
-      return p.slice(0, 3);
-    };
-    const a = parse(latest);
-    const b = parse(current);
-    if (a[0] > b[0]) return true;
-    if (a[0] < b[0]) return false;
-    return a[1] > b[1];
+  function isWorthNotifying() {
+    return false; // Custom build: never display cached upstream notices.
   }
 
   SK.maybeBuildUpdateNotice = async function maybeBuildUpdateNotice() {

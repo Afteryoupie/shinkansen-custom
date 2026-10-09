@@ -1,74 +1,105 @@
-"""Draw the LLM watchdog identity and state icons from simple vector geometry."""
+"""Left-facing watchdog vector artwork; keep geometry in sync with LLMMenuBar.swift.
+
+Ready means a loaded model with no active requests. Only inference opens the jaw.
+The native menu uses transparent template artwork; app/tray icons have a white
+face for contrast on either light or dark desktops.
+"""
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 ASSETS = Path(__file__).resolve().parent
-COLORS = {'running': '#16834A', 'sleeping': '#647084', 'starting': '#C47A05', 'offline': '#9B3C43'}
-LABELS = {'running': 'RUNNING / ON', 'sleeping': 'SLEEPING / OFF', 'starting': 'LOADING', 'offline': 'DISCONNECTED'}
+STATES = ('sleeping', 'ready', 'running', 'starting', 'offline')
+LABELS = ('OFF', 'READY', 'WORKING', 'LOADING', 'OFFLINE')
+# Cubic Bezier segments: start point followed by (control1, control2, end).
+TOP = [(5, 21), (16, 19, 19, 18, 21, 12), (23, 3, 37, 1, 45, 5), (49, 7, 49, 10, 50, 13)]
+CLOSED = [(5, 21), (3, 27, 8, 34, 15, 36), (21, 39, 27, 35, 30, 43)]
+OPEN = [(5, 21), (3, 27, 9, 31, 18, 31), (17, 34, 15, 36, 12, 37), (15, 42, 23, 40, 26, 40), (29, 40, 31, 42, 32, 44)]
+EAR = [(45, 6), (38, 7, 38, 14, 35, 25), (33, 34, 36, 43, 42, 44), (51, 47, 62, 38, 60, 30), (56, 23, 54, 14, 50, 9), (48, 7, 46, 6, 45, 6)]
+EYE = [(22, 17), (24, 20, 27, 20, 29, 19)]
+
+
+def points(path):
+    result = [path[0]]
+    for x1, y1, x2, y2, x3, y3 in path[1:]:
+        x0, y0 = result[-1]
+        for step in range(1, 41):
+            t = step / 40
+            u = 1 - t
+            result.append((u**3*x0 + 3*u*u*t*x1 + 3*u*t*t*x2 + t**3*x3,
+                           u**3*y0 + 3*u*u*t*y1 + 3*u*t*t*y2 + t**3*y3))
+    return result
+
+
+def svg_path(path):
+    return 'M' + ' '.join(map(str, path[0])) + ''.join(' C' + ' '.join(map(str, p)) for p in path[1:])
+
+
+def svg_markup(status):
+    jaw = OPEN if status == 'running' else CLOSED
+    eye = ('<ellipse cx="26.5" cy="18" rx="3.5" ry="4"/>' if status in ('ready', 'running', 'starting')
+           else f'<path d="{svg_path(EYE)}" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>')
+    return (f'<g fill="currentColor"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">'
+            f'<path d="{svg_path(TOP)}"/><path d="{svg_path(jaw)}"/></g>'
+            f'<path d="{svg_path(EAR)}Z"/><ellipse cx="6.5" cy="23" rx="3.5" ry="3"/>{eye}</g>')
 
 
 def draw_icon(status, size=64):
-    # Supersampling preserves strong shapes at 16 px without tiny typography.
     scale = 16
     image = Image.new('RGBA', (64 * scale, 64 * scale))
     draw = ImageDraw.Draw(image)
-    def box(coords):
-        return tuple(round(value * scale) for value in coords)
-    def polygon(points, fill):
-        draw.polygon([(round(x * scale), round(y * scale)) for x, y in points], fill=fill)
-    def line(points, fill, width=3):
-        draw.line([(round(x * scale), round(y * scale)) for x, y in points], fill=fill, width=width * scale)
-    color = COLORS.get(status, COLORS['offline'])
-    white, ink = '#FFFFFF', '#17303B'
-    draw.rounded_rectangle(box((2, 2, 62, 62)), radius=14 * scale, fill=color)
-    # A watchful robot dog: upright ears, broad muzzle and chip-like nose.
-    polygon([(10, 28), (10, 10), (26, 19)], white)
-    polygon([(38, 19), (54, 10), (54, 28)], white)
-    draw.rounded_rectangle(box((12, 18, 52, 49)), radius=11 * scale, fill=white)
-    if status == 'sleeping':
-        line([(19, 29), (27, 29)], ink)
-        line([(37, 29), (45, 29)], ink)
+    ink = '#171717'
+    def xy(p):
+        return (round(p[0]*scale), round((p[1]+8)*scale))
+    def curve(path):
+        pts = [xy(p) for p in points(path)]
+        draw.line(pts, fill=ink, width=round(2.6*scale), joint='curve')
+        for x, y in (pts[0], pts[-1]):
+            r = 1.3 * scale
+            draw.ellipse((x-r, y-r, x+r, y+r), fill=ink)
+    def ellipse(box, fill=ink):
+        x1, y1 = xy(box[:2]); x2, y2 = xy(box[2:])
+        draw.ellipse((x1, y1, x2, y2), fill=fill)
+    jaw = OPEN if status == 'running' else CLOSED
+    # Neutral white underlay, including a thin ear rim, keeps dark trays legible.
+    silhouette = points(TOP) + points(EAR)[1:] + list(reversed(points(jaw)))
+    outline = [xy(p) for p in silhouette]
+    draw.polygon(outline, fill='white')
+    ear = [xy(p) for p in points(EAR)]
+    draw.line(ear, fill='white', width=2*scale, joint='curve')
+    curve(TOP); curve(jaw)
+    draw.polygon(ear, fill=ink)
+    ellipse((3, 20, 10, 26))
+    if status in ('ready', 'running', 'starting'):
+        ellipse((23, 14, 30, 22))
+        ellipse((24.5, 15, 26.5, 17), 'white')
     else:
-        draw.rounded_rectangle(box((20, 25, 26, 32)), radius=2 * scale, fill=ink)
-        draw.rounded_rectangle(box((38, 25, 44, 32)), radius=2 * scale, fill=ink)
-    draw.rounded_rectangle(box((27, 35, 37, 41)), radius=2 * scale, fill=ink)
-    line([(32, 39), (32, 45)], ink, 2)
-    # Large high-contrast state badge, legible independently of its color.
-    draw.ellipse(box((39, 39, 64, 64)), fill=ink, outline=white, width=2 * scale)
-    if status == 'running':
-        polygon([(48, 45), (48, 58), (58, 51.5)], '#61F19D')
-    elif status == 'sleeping':
-        draw.rectangle(box((46, 45, 50, 58)), fill=white)
-        draw.rectangle(box((54, 45, 58, 58)), fill=white)
-    elif status == 'starting':
-        polygon([(46, 45), (58, 45), (52, 51), (58, 58), (46, 58), (52, 51)], '#FFD86B')
-    else:
-        line([(47, 46), (57, 57)], white, 3)
-        line([(57, 46), (47, 57)], white, 3)
+        curve(EYE)
     return image.resize((size, size), Image.Resampling.LANCZOS)
 
 
 def main():
-    for status in COLORS:
-        draw_icon(status, 1024).save(ASSETS / f'watchdog-{status}.png')
-        draw_icon(status, 256).save(ASSETS / f'watchdog-{status}.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(256,256)])
-    # The app identity is the watchful, ready dog. Runtime icons use each state.
-    draw_icon('running', 1024).save(ASSETS / 'guardian-1024.png')
-    draw_icon('running', 1024).save(ASSETS / 'guardian.icns')
-    preview = Image.new('RGB', (960, 340), '#F5F3EC')
+    for state in STATES:
+        draw_icon(state, 1024).save(ASSETS / f'watchdog-{state}.png')
+        draw_icon(state, 256).save(ASSETS / f'watchdog-{state}.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(256,256)])
+        (ASSETS / f'watchdog-{state}.svg').write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 48">' + svg_markup(state) + '</svg>\n')
+    draw_icon('ready', 1024).save(ASSETS / 'guardian-1024.png')
+    draw_icon('ready', 1024).save(ASSETS / 'guardian.icns')
+    preview = Image.new('RGB', (960, 360), '#F5F3EC')
     pen = ImageDraw.Draw(preview)
-    try:
-        font = ImageFont.truetype('segoeuib.ttf', 17)
-    except OSError:
-        font = ImageFont.load_default(size=17)
-    for index, status in enumerate(COLORS):
-        x = index * 240
-        preview.paste(draw_icon(status, 144), (x + 48, 34), draw_icon(status, 144))
-        pen.text((x + 24, 200), LABELS[status], font=font, fill='#242620')
-        for size, offset in [(16, 40), (24, 94), (32, 151)]:
-            icon = draw_icon(status, size)
-            preview.paste(icon, (x + offset, 248), icon)
-            pen.text((x + offset, 294), str(size), font=font, fill='#647084')
+    font = ImageFont.load_default(size=18)
+    for index, state in enumerate(STATES):
+        x = index * 192
+        icon = draw_icon(state, 152)
+        preview.paste(icon, (x+20, 12), icon)
+        pen.text((x+24, 185), LABELS[index], font=font, fill='#242620')
+        for size, offset in [(16, 24), (24, 74), (32, 126)]:
+            icon = draw_icon(state, size)
+            preview.paste(icon, (x+offset, 231), icon)
+            pen.text((x+offset, 274), str(size), font=font, fill='#647084')
+        pen.rectangle((x, 306, x+191, 359), fill='#242620')
+        icon = draw_icon(state, 32)
+        preview.paste(icon, (x+80, 316), icon)
     preview.save(ASSETS / 'watchdog-states-preview.png')
 
 

@@ -106,10 +106,8 @@ try {
   });
 } catch (_) { /* alarms 不可用環境 */ }
 
-browser.alarms?.create('update-check', { periodInMinutes: 60 * 24 });
-_registerAlarm('update-check', () => {
-  checkForUpdate().catch(err => debugLog('warn', 'update-check', 'alarm check failed', { error: err.message }));
-});
+browser.alarms?.clear('update-check'); // Remove the old upstream polling alarm.
+
 
 // ─── v1.8.41:USD ↔ TWD 匯率每日更新 ─────────────────────
 // 設計同 update-check：三層觸發確保 cache 不會永遠 stale。

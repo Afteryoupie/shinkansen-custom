@@ -517,3 +517,6 @@ button.link.small:hover { text-decoration: underline; }
 .welcome-banner-dismiss:hover { background: #f0fdf4; }
 /* v1.6.5: 同 .update-banner 的 hidden 覆寫修法 */
 .welcome-banner[hidden] { display: none !important; }
+
+/* First visit: reveal controls only after the saved theme has been read. */
+:root[data-theme-pending] body { visibility: hidden; }

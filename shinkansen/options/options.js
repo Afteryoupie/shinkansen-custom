@@ -172,12 +172,6 @@ async function load() {
 
   // 多指觸控手勢 section 的顯示由 CSS 控制（.ios-only + body.runtime-ios-touch，
   // 只在真觸控裝置顯示；iOS build 跑在 Mac 無觸控 → 不顯示），這裡不設 hidden。
-  // iOS 上架提示 pill:iOS build 本身不顯示(使用者已在 iOS 上,提示無意義)。
-  // href 依 UI 語系決定 storefront(applyUiLanguageRefresh 於語系切換時同步更新)
-  $('ios-promo').hidden = IS_IOS_BUILD;
-  if (window.__SK?.i18n?.iosAppStoreUrl) {
-    $('ios-promo').href = window.__SK.i18n.iosAppStoreUrl(s.uiLanguage || 'auto');
-  }
   // 懸停翻譯修飾鍵（issue #67）
   $('hoverTranslateModifier').value = ['off', 'shift', 'alt', 'ctrl'].includes(s.hoverTranslateModifier) ? s.hoverTranslateModifier : 'off';
   $('hoverTranslateMode').value = s.hoverTranslateMode === 'single' ? 'single' : 'dual';
@@ -287,7 +281,6 @@ async function load() {
   // v1.6.23: ASR 分句改單一 toggle——開啟=progressive（混合模式）、關閉=heuristic（預設分句）。
   // 舊 'llm' 值視為 progressive（行為相近，LLM 結果仍會顯示；只是改成漸進方式）。
   $('ytAsrProgressive').checked = yt.asrMode !== 'heuristic';
-  if ($('ytPreferEnglishAsr')) $('ytPreferEnglishAsr').checked = yt.preferEnglishAsr === true;
   if ($('ytJevEnabled')) $('ytJevEnabled').checked = yt.jevEnabled === true;
   if ($('ytJevApiKey')) $('ytJevApiKey').value = yt.jevApiKey || '';
   if ($('ytJevApiUrl')) $('ytJevApiUrl').value = yt.jevApiUrl || 'https://api.typesafe.ai/v1/systemone';
@@ -416,7 +409,7 @@ async function load() {
     const dictLang = I18N.getUiLanguage($('uiLanguage')?.value || s.uiLanguage || 'auto');
     I18N.applyI18n(document, dictLang);
     { const _vEl = $('options-version');
-      if (_vEl) _vEl.textContent = 'v' + browser.runtime.getManifest().version; }
+      if (_vEl) _vEl.textContent = 'v' + (browser.runtime.getManifest().version_name || browser.runtime.getManifest().version); }
     // refreshSlotDropdownLabels 在 load() 較早處(line ~273)已跑過一次,但當時
     // $('uiLanguage').value 還沒從 storage 同步進去,_t() 會用 HTML 預設 'auto'
     // → 跑到 en dict。現在 picker value 已 sync,重做一次拿到正確 dict。
@@ -1088,7 +1081,6 @@ async function _saveImpl() {
       autoTranslate:      $('ytAutoTranslate').checked,
       // v1.6.23: ASR 分句單一 toggle——checked=progressive（混合）、unchecked=heuristic
       asrMode: $('ytAsrProgressive').checked ? 'progressive' : 'heuristic',
-      preferEnglishAsr: $('ytPreferEnglishAsr')?.checked === true,
       jevEnabled: $('ytJevEnabled')?.checked === true,
       jevApiKey:  $('ytJevApiKey')?.value?.trim() || '',
       jevApiUrl:  $('ytJevApiUrl')?.value?.trim() || 'https://api.typesafe.ai/v1/systemone',
@@ -1373,9 +1365,8 @@ function applyUiLanguageRefresh(dictLang) {
   if (!I18N) return;
   I18N.applyI18n(document, dictLang);
   { const _vEl = $('options-version');
-    if (_vEl) _vEl.textContent = 'v' + browser.runtime.getManifest().version; }
+    if (_vEl) _vEl.textContent = 'v' + (browser.runtime.getManifest().version_name || browser.runtime.getManifest().version); }
   // iOS 上架提示 pill 的 storefront 跟著 UI 語系走
-  if (I18N.iosAppStoreUrl && $('ios-promo')) $('ios-promo').href = I18N.iosAppStoreUrl(dictLang);
   // 動態 dropdown(refreshSlotDropdownLabels)用 _t() 取 prefix,UI 語系切換要重組
   refreshSlotDropdownLabels();
   // 自訂快速鍵 recorder:「（預設）」後綴 / 「未設定」文案要跟上新語言

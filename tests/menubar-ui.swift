@@ -16,6 +16,24 @@ extension LLMMenuBarController {
         assert(modelsItem.title == currentModel && modelsItem.submenu === modelsMenu)
         assert(panel.countdown.font!.pointSize == 17)
         assert(autoItem.state == .on)
+        let readyArtwork = statusItem.button!.image!.tiffRepresentation!
+        assert(statusItem.button!.toolTip!.contains("準備就緒"))
+        activeRequests = 1; refreshPresentation()
+        let workingArtwork = statusItem.button!.image!.tiffRepresentation!
+        assert(readyArtwork != workingArtwork, "Inference must open the jaw")
+        assert(statusItem.button!.toolTip!.contains("處理請求"))
+        activeRequests = 0; refreshPresentation()
+        assert(statusItem.button!.image!.tiffRepresentation! == readyArtwork, "Completed inference must close the jaw")
+        currentStatus = "sleeping"; refreshPresentation()
+        let sleepingArtwork = statusItem.button!.image!.tiffRepresentation!
+        assert(sleepingArtwork != readyArtwork, "Sleep must close the eye")
+        for (name, artwork) in [("ready", readyArtwork), ("working", workingArtwork), ("sleeping", sleepingArtwork)] {
+            let rep = NSBitmapImageRep(data: artwork)!
+            try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/watchdog-native-\(name).png"))
+        }
+        isConnected = false; activeRequests = 1; refreshPresentation()
+        assert(statusItem.button!.image!.tiffRepresentation! == sleepingArtwork, "Disconnection must clear stale activity")
+        isConnected = true; currentStatus = "running"; activeRequests = 0; refreshPresentation()
         let identity = menu.items.map { ObjectIdentifier($0) }
         isMenuOpen = true
         nextPoll = .greatestFiniteMagnitude

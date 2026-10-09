@@ -154,7 +154,7 @@ export const DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT = `你是專業的{sourceLanguag
 </input_format>
 
 <task>
-1. 依語意自由合併鄰近片段成完整句子（可跨多個元素，通常 1 句涵蓋 3-10 個片段）；**單句譯文長度不可超過兩行字幕（中文約 35 個全形字）**，接近上限即使語意尚未結束也要拆成下一句，寧可拆短不要超長
+1. 依語意自由合併鄰近片段成完整句子（可跨多個元素，通常 1 句涵蓋 3-10 個片段）；**單句譯文以一行短字幕為目標（中文最多約 24 個全形字）**，接近上限時在子句、轉折或自然停頓處拆成下一句，保留完整內容，不把多個獨立子句合成一長句
 2. 修正明顯的 ASR 辨識錯字（同音字、專有名詞）
 3. 翻成台灣繁體中文純文字，【全篇嚴禁任何標點符號】（句中停頓或斷句改為半形空格，句末直接以文字結束，絕對不加句號、逗號、問號、驚嘆號等任何標點）
 4. 用台灣自然口語，避免書面語腔調
@@ -757,7 +757,6 @@ export const DEFAULT_SETTINGS = {
     // 預設 100 = 跟隨各平台原生字幕大小（桌面零改變）。設定在 popup,只在 YouTube 影片頁顯示。
     captionScale: 100,
     // v2.5.0: Jev 類型化決策引擎 (System One) 字幕過濾與智慧分流
-    preferEnglishAsr: false,
     jevEnabled: false,
     jevApiKey: '',
     jevApiUrl: 'https://api.typesafe.ai/v1/systemone',

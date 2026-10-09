@@ -23,6 +23,7 @@ export function resolveEffectiveTheme(themePref) {
  * @returns {'light' | 'dark'} effective theme
  */
 export function applyTheme(themePref) {
+  try { localStorage.setItem('sk-ui-theme', themePref || 'auto'); } catch (_) {}
   const effective = resolveEffectiveTheme(themePref);
   document.documentElement.setAttribute('data-theme', effective);
   document.documentElement.setAttribute('data-theme-pref', themePref || 'auto');
@@ -35,7 +36,8 @@ export function applyTheme(themePref) {
  * @returns {Promise<string>} 載入的主題偏好
  */
 export async function initTheme(onChangeCallback) {
-  let savedPref = 'auto';
+  if (window.__skThemeReady) await window.__skThemeReady;
+  let savedPref = document.documentElement.getAttribute('data-theme-pref') || 'auto';
   try {
     const res = await browser.storage.sync.get('uiTheme');
     if (res?.uiTheme) savedPref = res.uiTheme;
