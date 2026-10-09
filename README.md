@@ -14,7 +14,7 @@
 | 本機字幕排程 | 本機端點使用字幕佇列及精簡提示詞；停用會與前景字幕競爭的本地全軌背景翻譯 worker，保留播放視窗預翻。 |
 | YouTube 選軌 | 人工中文字幕優先，其次人工英文字幕；需要 ASR 自動字幕時選影片原音語言，避免選到配音語言。 |
 | 字幕分段 | 長譯文以約 24 字為分段目標，利用標點、空格、詞界與轉折詞選切點；保留來源文字與顯示時間範圍。 |
-| Laya 決策模型 | Watchdog 獨立管理 Laya multilingual，透過本機 `/v1/systemone` 提供字幕邊界判斷；不明確或服務失敗時回到本地規則，保留真實對話與型號。 |
+| Laya 決策模型 | Watchdog 獨立管理 Laya multilingual，透過本機 `/v1/systemone` 協助字幕斷句、翻譯前過濾與翻譯後格式檢查；格式不合時只重試問題段落一次，保留真實對話與型號。 |
 | LLM watchdog | 附帶模型管理、按需喚醒、閒置休眠、macOS 選單列、Windows 系統匣與網頁控制台。另有 Apple Foundation Models 整合。 |
 | 狀態圖標 | 朝左狗狗：休眠／離線閉眼，準備／載入睜眼閉嘴，處理請求時張嘴。App 本體使用準備表情。 |
 | 設定介面 | 提早讀取主題偏好；移除設定頁的 iOS／iPadOS App Store 宣傳按鈕。 |
@@ -23,6 +23,18 @@
 OpenAI 相容端點、Gemini、雙語翻譯與 OpenCC 等支援沿用或擴充既有能力。**資料是否送往外部取決於選用的翻譯引擎及決策 API 網址設定**；使用雲端 API 時，相關文字會送至該服務，並非所有模式都只在本機運算。
 
 ## 最近更新
+
+### 2026-10-09 · 字幕過濾與格式修正
+
+- **接上實際翻譯入口**：原先 `evaluateBatch` 已有判斷方法，但翻譯包裝只呼叫本地音效規則。現在逐句字幕及 ASR 編號批次都接上翻譯前決策；音效標籤移除，可靠來源語言已符合目標、純型號或確定不需翻譯的文字保留原文，其餘交給翻譯引擎。不因模型把正常對話判成雜訊就刪除。
+- **只檢查輸出格式**：檢查空輸出、段數不符、ASR 編號缺漏／重疊、分隔符、程式碼區塊、JSON 或字幕標記等包裝。Laya 格式分類器只取得輸出與格式要求，不取得原文語意；不評斷錯譯、漏意、數字內容或翻譯品質。
+- **一次修正與快取保護**：格式有問題的段落繞過快取重試一次，修正後再檢查；有效輸出才寫入翻譯快取。持續失敗不立即再重試，不把錯位或壞格式字幕當成完成。啟用決策時，人工字幕先等整批檢查完成再顯示。
+- **保留時間軸與記錄**：過濾後仍保留原始字幕位置；ASR 音效空列須明確核准，並留作時間邊界。除錯記錄 `Laya subtitle pipeline` 顯示過濾、保留、檢查、修正及未解決的數量。
+- **移除說話者箭頭**：清除 YouTube 字幕每行開頭的 `>>` 標記，翻譯輸入與字幕顯示都套用；舊快取譯文帶有箭頭時也會在顯示時移除，句中符號保留。
+
+模型機率尚未校準；不確定或服務失敗時保留本地規則。支援 Gemini、自訂模型及 Google Translate 的字幕入口；Google Translate 的重試是重新請求翻譯，無法加入 LLM 修正提示。更新後重新載入擴充功能並刷新影片頁即可；Watchdog 的 Laya 後端在下次喚醒時讀取新程式，不需重建原生 App。
+
+驗證：76 項 JavaScript 測試通過；46 項 Python 測試中 45 項通過、1 項 Windows 實機剪貼簿測試略過。M3 已以正式 Watchdog、Laya 及翻譯 LLM 實測逐句與 ASR 編號流程，確認音效排除、型號保留、格式修正一次及位置對齊。測試由工具驅動，尚未在瀏覽器全片實播。
 
 ### 2026-10-09 · Laya 本機決策模型整合
 
@@ -85,7 +97,7 @@ Apple 整合有平台與模型品質限制，請先閱讀 [Apple 翻譯說明](w
 
 長譯文分段只調整顯示，不刪減內容；時間切點盡量吸附到來源片段起點。跨語言詞序不同、原始字幕缺少細部時間戳、短句時長不足或播放器太窄時，仍可能換行或出現時間近似。
 
-Laya multilingual 預設接上本機 Watchdog 的 `http://127.0.0.1:8080/v1/systemone`，不需 API Key。舊 Jev 設定會一次性轉換成 Laya；之後的開關與自訂網址會保留。決策模型只協助 ASR 語意分句，不以模型的雜訊判斷刪除真實字幕。停用、低信心、逾時或服務失敗時沿用本地規則。模型尚未針對字幕校準，機率不代表實際正確率。安裝與操作見 [Laya 決策模型](watchdog/LAYA.md)。
+Laya multilingual 預設接上本機 Watchdog 的 `http://127.0.0.1:8080/v1/systemone`，不需 API Key。舊 Jev 設定會一次性轉換成 Laya；之後的開關與自訂網址會保留。流程為「斷句／過濾 → 翻譯 → 格式檢查 → 必要時修正一次」。正常對話、廣告口播與重複說話都保留，不以模型雜訊判斷直接刪除。輸出檢查只針對格式，不判斷語意對錯。停用、低信心、逾時或服務失敗時沿用本地規則。模型尚未針對字幕校準，機率不代表實際正確率。安裝與操作見 [Laya 決策模型](watchdog/LAYA.md)。
 
 ## 專案結構
 
@@ -104,7 +116,7 @@ tests/            字幕、介面及模型守護程式回歸測試
 在儲存庫根目錄執行，不會呼叫真實翻譯 API：
 
 ```sh
-node --test tests/subtitle-jev.test.mjs tests/subtitle-background.test.mjs tests/subtitle-splitting.test.mjs tests/extension-ui.test.mjs
+node --test tests/subtitle-decisions.test.mjs tests/subtitle-jev.test.mjs tests/subtitle-background.test.mjs tests/subtitle-splitting.test.mjs tests/extension-ui.test.mjs
 ```
 
 原生選單及平台相關測試另見 [watchdog 設計紀錄](watchdog/design/README.md)。

@@ -1164,7 +1164,7 @@
       <p class="muted">字幕選擇順序：優先原生中文字幕，其次翻譯原生英文字幕；自動字幕使用影片原始語言。繁簡不一致時依目標語言轉換。</p>
       <h2>Laya 本機決策模型</h2>
       <p class="muted">
-        透過 LLM watchdog 的 Laya multilingual 判斷自動字幕的句子邊界。判斷不明確或服務失敗時沿用本地分句規則；只過濾明確音效標籤，保留真實對話。
+        透過 LLM watchdog 的 Laya multilingual 判斷斷句、在翻譯前過濾不需翻譯的內容，並檢查輸出格式。已是目標語言或純名稱時保留原文；明確音效或雜訊才隱藏。格式不合只重試一次，不確定或服務失敗時沿用本地規則。
       </p>
       <label class="checkbox-label">
         <input type="checkbox" id="ytJevEnabled">

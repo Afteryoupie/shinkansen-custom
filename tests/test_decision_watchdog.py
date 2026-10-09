@@ -134,6 +134,50 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AdapterTests(unittest.TestCase):
+    def test_filter_uses_individual_contexts_and_preserves_ids(self):
+        agent = Mock()
+        agent.predict_batch.return_value = [{"answers": {"valid": {"probabilities": {"A": .99, "B": .01}},
+                                                        "needs": {"probabilities": {"A": .1, "B": .9}}},
+                                             "usage": {"input_tokens": 20}}]
+        payload = {"state": {"task": "subtitle_filter", "texts": ["BMW M3"], "sourceLanguage": "en", "targetLanguage": "zh-TW"},
+                   "questions": {f"{kind}_0": {"type": "noul"} for kind in ("valid", "needs")}}
+        result = predict(agent, payload)
+        self.assertEqual(result["answers"]["valid_0"]["noul"], .99)
+        self.assertEqual(result["answers"]["needs_0"]["noul"], .1)
+        self.assertEqual(agent.predict_batch.call_args.args[0][0]["text"], "BMW M3")
+        agent.system_one.assert_not_called()
+
+    def test_format_checker_does_not_receive_source_meaning(self):
+        agent = Mock()
+        agent.predict_batch.return_value = [{"answers": {"error": {"probabilities": {"A": .01, "B": .99}}},
+                                             "usage": {"input_tokens": 20}}]
+        payload = {"state": {"task": "subtitle_format", "pairs": [{"source": "private source sentence", "translation": "```你好```"}]},
+                   "questions": {"error_0": {"type": "noul"}}}
+        result = predict(agent, payload)
+        self.assertEqual(result["answers"]["error_0"]["noul"], .99)
+        self.assertEqual(result["answers"]["error_0"]["reason"], "format")
+        contexts, questions = agent.predict_batch.call_args.args
+        self.assertEqual(contexts, [{"output": "```你好```", "expectedFormat": "one plain subtitle line"}])
+        self.assertIn("never translation meaning", questions["error"]["instructions"])
+
+    def test_truncated_context_cannot_authorize_dropping_subtitles(self):
+        agent = Mock()
+        agent.predict_batch.return_value = [{"answers": {}, "usage": {"input_tokens": 20, "truncated": True}}]
+        payload = {"state": {"task": "subtitle_filter", "texts": ["hello"]},
+                   "questions": {f"{kind}_0": {"type": "noul"} for kind in ("valid", "needs")}}
+        self.assertEqual(predict(agent, payload)["answers"], {})
+
+    def test_malformed_subtitle_batches_fail_before_inference(self):
+        agent = Mock()
+        cases = [({"task": "subtitle_filter", "texts": ["a"] * 17}, {}),
+                 ({"task": "subtitle_filter", "texts": ["a"]}, {"other": {"type": "noul"}}),
+                 ({"task": "subtitle_format", "pairs": [{"source": "hello", "translation": None}]}, {}),
+                 ({"task": "subtitle_filter", "texts": ["a" * 1001]}, {})]
+        for context, questions in cases:
+            with self.assertRaises(ValueError):
+                predict(agent, {"state": context, "questions": questions})
+        agent.predict_batch.assert_not_called()
+
     def test_boundary_contexts_are_batched_individually_and_keep_ids(self):
         agent = Mock()
         agent.predict_batch.return_value = [{"answers": {"boundary": {"probabilities": {"A": .1, "B": .9}}},

@@ -12,6 +12,8 @@ from watchdog.decision import MODEL_ID, validate_payload
 
 def predict(agent, payload):
     questions, context = payload["questions"], payload["state"]
+    if isinstance(context, dict) and context.get("task") in ("subtitle_filter", "subtitle_format"):
+        return predict_subtitles(agent, context, questions)
     # Each subtitle boundary has its own context: no indexing a long state that
     # would silently truncate at the checkpoint's 1024-token input limit.
     boundaries = context.get("boundaries") if isinstance(context, dict) else None
@@ -31,6 +33,63 @@ def predict(agent, payload):
                             "action": answer.get("action"), "uncalibrated": True}
         return {"answers": answers, "usage": {"input_tokens": sum(r["usage"]["input_tokens"] for r in results), "output_tokens": 0}}
     return agent.system_one(context, questions)
+
+
+def predict_subtitles(agent, context, questions):
+    """One short context per subtitle, shared neutral labels for the checkpoint."""
+    target = context.get("targetLanguage", "zh-TW")
+    source = context.get("sourceLanguage", "auto")
+    if not all(isinstance(value, str) and len(value) <= 64 for value in (target, source)):
+        raise ValueError("Invalid subtitle language")
+    filtering = context["task"] == "subtitle_filter"
+    rows = context.get("texts" if filtering else "pairs")
+    if not isinstance(rows, list) or not 1 <= len(rows) <= (16 if filtering else 32):
+        raise ValueError("Invalid subtitle batch")
+    if filtering:
+        if any(not isinstance(text, str) or len(text) > 1000 for text in rows):
+            raise ValueError("Invalid subtitle text")
+        contexts = [{"text": text, "sourceLanguage": source, "targetLanguage": target} for text in rows]
+        common = {
+            "valid": {"type": "choice", "instructions":
+                      "Distinguish linguistic content from nonverbal noise. Greetings, repeated speech, names, model numbers and unfinished phrases are linguistic content.",
+                      "criteria": {"A": "Speech or meaningful words, including names and fragments.",
+                                   "B": "Only a nonverbal sound description, transcription garbage or meaningless symbols."}},
+            "needs": {"type": "choice", "instructions":
+                      f"Decide whether this text requires translation into {target}. Respect sourceLanguage. Japanese kanji is not evidence of Chinese. Do not omit advertisements, greetings or repetitions.",
+                      "criteria": {"A": "Words requiring translation into the target language.",
+                                   "B": "Already in the requested language and script, or only a name, brand or identifier that should stay unchanged."}}}
+        expected = {f"{kind}_{i}" for i in range(len(rows)) for kind in common}
+    else:
+        if any(not isinstance(pair, dict) or not all(isinstance(pair.get(key), str) and len(pair[key]) <= 1000
+               for key in ("source", "translation")) for pair in rows):
+            raise ValueError("Invalid subtitle translation pair")
+        contexts = [{**pair, "sourceLanguage": source, "targetLanguage": target} for pair in rows]
+        # The user requests format checks only. Do not expose source meaning to
+        # this classifier or turn it into translation-quality evaluation.
+        contexts = [{"output": pair["translation"], "expectedFormat": "one plain subtitle line"} for pair in rows]
+        common = {"error": {"type": "choice", "instructions":
+                  "Does output follow the expected format? Check only formatting, never translation meaning or quality.",
+                  "criteria": {"A": "One plain subtitle line without code fences, JSON, segment markers or explanation wrappers.",
+                               "B": "Malformed output, extra lines, code fences, JSON, segment markers or explanation wrappers."}}}
+        expected = {f"error_{i}" for i in range(len(rows))}
+    if set(questions) != expected or any(q.get("type") != "noul" for q in questions.values()):
+        raise ValueError("Invalid subtitle decision questions")
+    results = agent.predict_batch(contexts, common, batch_size=8)
+    if len(results) != len(rows):
+        raise ValueError("Incomplete subtitle decisions")
+    answers = {}
+    for i, result in enumerate(results):
+        if result["usage"].get("truncated"):
+            continue  # Missing answers cause the extension to keep local rules.
+        for kind in common:
+            answer = result["answers"][kind]
+            probabilities = answer["probabilities"]
+            value = probabilities["A"] if filtering else 1 - probabilities["A"]
+            answers[f"{kind}_{i}"] = {"type": "noul", "noul": value,
+                                       "action": answer.get("action"), "uncalibrated": True}
+            if not filtering:
+                answers[f"{kind}_{i}"]["reason"] = "format"
+    return {"answers": answers, "usage": {"input_tokens": sum(r["usage"]["input_tokens"] for r in results), "output_tokens": 0}}
 
 
 def main():

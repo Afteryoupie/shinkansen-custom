@@ -52,10 +52,29 @@ API 接受 `{model, state, questions}`，回傳 `{model, answers, usage, device,
 模型輸出的機率尚未校準，不能把門檻視為準確率保證。即使決策服務失敗，
 字幕仍保留原始片段、時間和本地分句的長度／停頓限制。
 
+翻譯前使用 `task: "subtitle_filter"`，逐項判斷是否為內容、是否需要翻譯。
+需 0.95 門檻才採用模型過濾；即使模型把正常文字判成雜訊，也不直接刪除對話，
+只允許明確標示的非語言字幕或符號隱藏。可靠來源語言已符合目標時及純型號可保留原文；
+只有漢字的日文不因外觀近似中文就跳過翻譯。問候、告別、廣告口播與重複對話保留。
+
+翻譯後使用 `task: "subtitle_format"`。**只檢查輸出格式，不判斷翻譯語意是否正確。**
+模型只看到輸出與「一行純字幕」要求，原文不送入格式分類器；機率達 0.9 才採用模型判斷。
+空譯文、額外換行、程式碼區塊、JSON 或字幕標記等另有直接格式檢查。
+段數不符及 ASR 編號缺漏／重疊由程式檢查，不靠模型猜配對。
+格式失敗的部分繞過快取重試一次；修正結果再檢查，有效輸出才寫入快取。
+啟用決策時停用人工字幕的提前串流顯示，避免尚未檢查就注入字幕。
+
+ASR 編號批次分開送出需要翻譯的連續區段，結果對回原始編號。
+音效空列透過 `asrIntentionalEmpty` 明確標示，仍保留時間邊界，避免前一句延伸到音效期間。
+除錯記錄 `Laya subtitle pipeline` 的 `filtered`、`preserved`、`checked`、
+`repairAttempted`、`repaired`、`unresolved` 可確認這些階段是否執行。
+`checked` 包含本地及模型格式檢查；`modelDecisions` 是達到門檻而採用的模型格式判斷數，
+不是 HTTP 請求數。判斷不明確時仍可能已請求模型，但沿用本地結果。
+
 ## 驗證
 
 ```sh
-node --test tests/subtitle-jev.test.mjs tests/subtitle-background.test.mjs tests/subtitle-splitting.test.mjs tests/extension-ui.test.mjs
+node --test tests/subtitle-decisions.test.mjs tests/subtitle-jev.test.mjs tests/subtitle-background.test.mjs tests/subtitle-splitting.test.mjs tests/extension-ui.test.mjs
 watchdog/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 

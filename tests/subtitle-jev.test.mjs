@@ -155,7 +155,7 @@ test('Remote filtering rejects only confident negatives and keeps uncertain spee
       valid_1: { type: 'noul', noul: 0.5 }, needs_1: { type: 'noul', noul: 0.5 },
       valid_2: { type: 'noul', noul: 'false' }, needs_2: { type: 'noul', noul: 0 },
     } }) });
-    const result = await new JevDecisionEngine({ enabled: true, apiKey: 'test' }).evaluateBatch(['noise', 'speech', 'dialogue']);
+    const result = await new JevDecisionEngine({ enabled: true, apiKey: 'test' }).evaluateBatch(['[engine revving]', 'speech', 'dialogue']);
     assert.equal(result[0].is_valid, false);
     assert.equal(result[1].is_valid, true);
     assert.equal(result[1].needs_translation, true);
@@ -197,6 +197,17 @@ test('ASR reversed ranges are normalized before full coverage validation', () =>
   assert.equal(result.length, 1);
   assert.equal(result[0].s, 0);
   assert.equal(result[0].e, 1500);
+});
+
+test('Approved empty ASR rows remain timeline boundaries and arbitrary empty output is rejected', () => {
+  const raw = segs(['Hello', '[music]', 'Bye']);
+  const entries = SK.ASR.parseLlmOutput('1-1|你好\n2-2|\n3-3|再見', raw, 1500, [1]);
+  assert.equal(entries[1].intentionalEmpty, true);
+  const resolved = SK.ASR.resolveEntryTimeline(entries, raw, 1500);
+  assert.equal(resolved.cues.length, 3);
+  assert.equal(resolved.cues[0].endMs, 500);
+  assert.equal(resolved.cues[1].text, '');
+  assert.throws(() => SK.ASR.parseLlmOutput('1-1|你好\n2-2|\n3-3|再見', raw, 1500), /unapproved empty/);
 });
 
 test('ASR gaps, overlaps, missing tails and invalid starts still trigger retries', () => {

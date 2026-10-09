@@ -343,7 +343,7 @@
     const rawText = res.result?.[0] || '';
     let entries;
     try {
-      entries = SK.ASR.parseLlmOutput(rawText, batch, batchEndMs);
+      entries = SK.ASR.parseLlmOutput(rawText, batch, batchEndMs, res.asrIntentionalEmpty);
     } catch (e) {
       SK.sendLog('warn', 'drive', `batch ${batchIdx + 1}/${totalBatches} parseAsrResponse failed (${engineLabel})`, {
         error: e?.message || String(e),

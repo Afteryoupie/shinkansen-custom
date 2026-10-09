@@ -22,6 +22,7 @@
     windowSizeS: 30,
     lookaheadS:  10,
     debugToast:  false,
+    jevEnabled: true,
     onTheFly:    false,          // v1.2.49: cache miss 時是否送 on-the-fly API 翻譯
     // preserveLineBreaks 已移除 toggle（v1.2.38），永遠 true（見 translateWindowFrom）
   };
@@ -320,8 +321,13 @@
       && (location.pathname.startsWith('/watch') || YT_LIVE_PATH_RE.test(location.pathname));
   };
 
+  // YouTube's leading >> marks a speaker change; it is not spoken dialogue.
+  function stripSpeakerPrefix(text) {
+    return String(text ?? '').replace(/^[ \t]*(?:>{2,}|＞{2,}|≫)[ \t]*/gm, '').trim();
+  }
+
   function normText(t) {
-    return t.replace(/\s+/g, ' ').trim().toLowerCase();
+    return stripSpeakerPrefix(t).replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
   // /live/<videoId> 路徑形態(videoId 字元集 = YouTube id 的 [A-Za-z0-9_-])。
@@ -407,7 +413,7 @@
       // v1.10.46: 不做全軌文字 dedup——副歌歌詞 / [Music] 等重複行第二次以後若被丟，
       // 該行第二次出現的時段不在任何 rawSegments → non-ASR seek 到該視窗不送翻、
       // ASR displayCues 出現空窗。重複文字落到 captionMap 是同 key 覆寫，本來就安全。
-      const lines = full.split('\n').map(l => l.trim()).filter(Boolean);
+      const lines = full.split('\n').map(stripSpeakerPrefix).filter(Boolean);
       const groupId = lines.length > 1 ? groupCounter++ : null;
       const lineStarts = perLineTiming
         ? _json3LineStarts(ev, lines.length, events[i + 1])
@@ -842,10 +848,11 @@
   }
 
   // null = 漏翻/無效；'' 只接受 background 明確標示的音效過濾。
-  function _subtitleText(source, value, intentionalEmpty = false) {
+  function _subtitleText(source, value, intentionalEmpty = false, preserved = false) {
     if (typeof value !== 'string') return null;
-    const clean = SK.sanitizeMarkers(value).replace(/\\n|\n/g, ' ').trim();
+    const clean = stripSpeakerPrefix(SK.sanitizeMarkers(value)).replace(/\\n|\n/g, ' ').trim();
     if (!clean) return intentionalEmpty ? '' : null;
+    if (preserved) return clean;
     const target = SK.YT.config?.targetLanguage || SK.STATE?.targetLanguage || 'zh-TW';
     if (/^(zh|ja|ko)/.test(target)) {
       const hasTarget = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(clean);
@@ -862,11 +869,13 @@
   }
 
   async function _translateSubtitleTexts(texts, type, generation) {
+    texts = texts.map(stripSpeakerPrefix);
     const current = () => SK.YT.active && generation === (SK.YT.captionSourceGen || 0);
     const usage = {};
+    const rejected = new Set();
     const send = async (input, skipCache = false) => {
       if (!current()) throw new Error('Subtitle session changed');
-      const res = await SK.safeSendMessage({ type, payload: { texts: input, glossary: null, skipCache } });
+      const res = await SK.safeSendMessage({ type, payload: { texts: input, glossary: null, skipCache, sourceLanguage: SK.YT.captionLang || 'auto' } });
       for (const [key, value] of Object.entries(res?.usage || {})) {
         if (typeof value === 'number') usage[key] = (usage[key] || 0) + value;
       }
@@ -874,7 +883,8 @@
       if (!res?.ok) throw new Error(SK.i18n.bgErrorMessage(res) || 'Subtitle translation failed');
       // 段數錯誤時不可猜位置：逐段補翻，以免第 N 段譯文被塞到 N+1 的時間上。
       if (!Array.isArray(res.result) || res.result.length !== input.length) return input.map(() => null);
-      return input.map((source, i) => _subtitleText(source, res.result[i], res.intentionalEmpty?.includes(i)));
+      if (!skipCache) res.decisionRejected?.forEach(i => rejected.add(i));
+      return input.map((source, i) => _subtitleText(source, res.result[i], res.intentionalEmpty?.includes(i), res.preservedIndices?.includes(i)));
     };
     let result;
     try { result = await send(texts); }
@@ -884,7 +894,7 @@
       result = texts.map(() => null);
     }
     for (let i = 0; i < result.length; i++) {
-      if (result[i] !== null) continue;
+      if (result[i] !== null || rejected.has(i)) continue;
       try { result[i] = (await send([texts[i]], true))[0]; }
       catch (error) {
         if (!current()) throw error;
@@ -971,13 +981,13 @@
     for (const entry of entries) {
       const s = Number(entry.s);
       const text = String(entry.t || '').trim();
-      if (!Number.isFinite(s) || !text) { droppedCount++; continue; }
+      if (!Number.isFinite(s) || (!text && entry.intentionalEmpty !== true)) { droppedCount++; continue; }
       if (!startMsSet.has(s)) {
         droppedCount++;
         if (s > spanStart && s < batchEndMs) caps.push(s);
         continue;
       }
-      valid.push({ s, text });
+      valid.push({ s, text, intentionalEmpty: entry.intentionalEmpty === true });
     }
     valid.sort((a, b) => a.s - b.s);
     const dedup = [];
@@ -993,7 +1003,7 @@
       const cap = caps.find(c => c > cur.s && c < nextS);
       const endMs = cap != null ? cap : nextS;
       if (endMs <= cur.s) continue; // 防禦:batchEndMs 異常小時不產生零長度 cue
-      cues.push({ startMs: cur.s, endMs, text: cur.text });
+      cues.push({ startMs: cur.s, endMs, text: cur.text, ...(cur.intentionalEmpty ? {intentionalEmpty: true} : {}) });
     }
     return { cues, droppedCount };
   }
@@ -1028,7 +1038,7 @@
       const seg = segs[i];
       if (!seg) continue;
       if (i > 0 && segs[i - 1] && seg.startMs - segs[i - 1].startMs >= SK.ASR_LLM_PAUSE_GAP_MS) lines.push('');
-      const text = String(seg.text || '').replace(/[\r\n]+/g, ' ').replace(/\|/g, '/').trim();
+      const text = stripSpeakerPrefix(seg.text).replace(/[\r\n]+/g, ' ').replace(/\|/g, '/').trim();
       lines.push(`${i + 1}|${text}`);
     }
     return lines.join('\n');
@@ -1036,7 +1046,7 @@
   const _ASR_LLM_LINE_RE = /^\s*(\d+)\s*(?:[-–~]\s*(\d+))?\s*[|｜]\s*(.+?)\s*$/;
   // 回傳與舊協定同形的 entries [{s, e, t}]，下游 _resolveAsrEntryTimeline 不變。
   // 舊 JSON 回應仍支援；編號格式修正倒序與批尾超界，缺漏或重疊仍拋錯供上層重試。
-  function _parseAsrLlmOutput(text, segs, batchEndMs) {
+  function _parseAsrLlmOutput(text, segs, batchEndMs, intentionalEmpty = []) {
     const stripped = _stripJsonFence(text || '');
     if (/^\s*\[/.test(stripped)) {
       const legacy = _parseAsrResponse(stripped);
@@ -1055,7 +1065,7 @@
     let expectedIndex = 1;
     for (const line of stripped.split('\n')) {
       if (!line.trim()) continue;
-      const m = line.match(_ASR_LLM_LINE_RE);
+      const m = line.match(_ASR_LLM_LINE_RE) || line.match(/^\s*(\d+)\s*(?:[-–~]\s*(\d+))?\s*[|｜]\s*()$/);
       if (!m) continue;
       matched++;
       let a = Number(m[1]);
@@ -1070,12 +1080,14 @@
       const segA = segs[a - 1];
       const segB = segs[b - 1];
       const rawTrans = m[3];
+      const empty = !rawTrans.trim() && Array.from({length: b - a + 1}, (_, i) => a - 1 + i).every(i => intentionalEmpty.includes(i));
+      if (!rawTrans.trim() && !empty) throw new Error('ASR response: unapproved empty subtitle');
       const cleanTrans = typeof SK.stripSubtitlePunctuation === 'function'
         ? SK.stripSubtitlePunctuation(rawTrans)
         : rawTrans;
       if (!segA || !segB) { entries.push({ s: NaN, e: NaN, t: cleanTrans }); continue; }
       const next = segs[b];
-      entries.push({ s: segA.startMs, e: next ? next.startMs : batchEndMs, t: cleanTrans });
+      entries.push({ s: segA.startMs, e: next ? next.startMs : batchEndMs, t: cleanTrans, ...(empty ? {intentionalEmpty: true} : {}) });
     }
     if (matched === 0 || expectedIndex !== segs.length + 1) {
       throw new Error('ASR response: missing subtitle segments');
@@ -1787,7 +1799,7 @@
   const _injectedSegmentText = new WeakMap();
 
   function _setSegmentText(el, text) {
-    const str = text == null ? '' : String(text);
+    const str = stripSpeakerPrefix(text);
     if (!str) {
       if (el.textContent !== '') el.textContent = '';
       _injectedSegmentText.set(el, '');
@@ -1813,6 +1825,8 @@
   SK._setSegmentText = _setSegmentText;
 
   function _setOverlayContent(targetText, sourceText) {
+    targetText = stripSpeakerPrefix(targetText);
+    sourceText = stripSpeakerPrefix(sourceText);
     const host = _ensureOverlay();
     if (!host || !host.shadowRoot) return;
     // v1.9.22:子元素被外部清掉時(過去 _resetTranslationStateForCacheClear bug 會把
@@ -2937,7 +2951,7 @@
     _logWindowUsage(subSegs.length, res.usage);
 
     const rawText = res.result?.[0] || '';
-    const entries = _parseAsrLlmOutput(rawText, subSegs, batchEndMs);
+    const entries = _parseAsrLlmOutput(rawText, subSegs, batchEndMs, res.asrIntentionalEmpty);
 
     // v2.0.54:顯示時間軸改由 _resolveAsrEntryTimeline 以片段時間軸分割(不採信 LLM 的 e),
     // 修「AI 分句字幕太早消失 / 下一句太晚出現」:LLM 挑錯句中片段的 e 時,舊邏輯讓
@@ -2949,7 +2963,8 @@
       // v1.9.22: 加 `seg &&` null guard 跟 displayCues 同樣 sparse 防禦原則
       const covered = subSegs.filter(seg => seg && seg.startMs >= cue.startMs && seg.startMs < cue.endMs);
       if (covered.length === 0) continue;
-      const validated = _subtitleText(joinSegTexts(covered.map(s => s.text), YT.captionLang), cue.text);
+      const preserved = covered.every(seg => res.asrPreservedIndices?.includes(subSegs.indexOf(seg)));
+      const validated = _subtitleText(joinSegTexts(covered.map(s => s.text), YT.captionLang), cue.text, cue.intentionalEmpty, preserved);
       if (validated === null) continue;
       cue.text = validated;
       YT.captionMap.set(covered[0].normText, cue.text);
@@ -3714,7 +3729,7 @@
         // 收 STREAMING_SEGMENT 立刻寫 captionMap + replaceSegmentEl,首字延遲從整批 resolve 砍成 SSE 首段
         // v1.9.21: FIRST_CHUNK_TIMEOUT_MS 1500 → 3000 跟文章翻譯路徑一致(留 200% margin,
         // 避免偶發網路慢 / Pro 模型 TTFT 1-3s 誤判 fallback)。Google MT / OpenAI-compat 維持原非 streaming。
-        const _streamSubtitleEnabled = !config.engine || config.engine === 'gemini';
+        const _streamSubtitleEnabled = !config.jevEnabled && (!config.engine || config.engine === 'gemini');
         const FIRST_CHUNK_TIMEOUT_MS = 3000;
         // v1.10.46: streaming idle watchdog 上限。字幕批次 ≤16 條短句，正常整批 < 10s;
         // 20s 沒任何 SEGMENT / DONE / ERROR = SW 已死，reject 走 non-streaming fallback。

@@ -3,6 +3,7 @@
 
 import { browser } from './lib/compat.js';
 import { LayaDecisionEngine } from './lib/jev.js';
+import { runSubtitleDecisionPipeline, runAsrDecisionPipeline, subtitleRepairPrompt } from './lib/subtitle-decisions.js';
 import { isLocalSubtitleProvider, queueLocalSubtitle, localSubtitlePrompt } from './lib/local-subtitle.js';
 import { IS_IOS_BUILD } from './lib/distribution.js'; // Phase 2: host app 設定橋接只在 iOS build 走 native messaging
 import { translateBatch, extractGlossary, extractTermRenderings, translateBatchStream, summarizeArticle } from './lib/gemini.js';
@@ -629,10 +630,11 @@ async function _handleAsrSubtitleBatch(payload, sender, cacheTag, namespace) {
   if (yt.model) geminiOverrides.model = yt.model;
   const pricingOverride = (yt.pricing && yt.pricing.inputPerMTok != null) ? yt.pricing : null;
   // ASR 路徑不套用固定術語表 / 黑名單（ASR prompt 已內含禁用詞規則，且 JSON 包裝增加術語注入難度）
-  return handleTranslate(payload, sender, geminiOverrides, pricingOverride, cacheTag,
+  return applyJevSubtitleFilter(payload, s, p => handleTranslate(p, sender,
+    { ...geminiOverrides, systemInstruction: subtitleRepairPrompt(geminiOverrides.systemInstruction, p) }, pricingOverride, cacheTag,
     false, false,
     // §3.6-4：ASR prompt 無使用者 override（不進 _p）；temperature 沿用字幕預設值判「非預設才進 key」
-    { temperatureDefault: DEFAULT_SETTINGS.ytSubtitle.temperature });
+    { temperatureDefault: DEFAULT_SETTINGS.ytSubtitle.temperature }), true);
 }
 
 // v2.0.53:文件翻譯批次的 fetch 逾時（TRANSLATE_DOC_BATCH* 兩個 handler 共用）。
@@ -640,69 +642,13 @@ async function _handleAsrSubtitleBatch(payload, sender, cacheTag, namespace) {
 // 詳見兩個 handler 內的註解
 const DOC_FETCH_TIMEOUT_MS = 120_000;
 
-// v2.5.0: Jev 類型化決策過濾包裝函式
-async function applyJevSubtitleFilter(payload, settings, doTranslateFn) {
-  const yt = settings.ytSubtitle || {};
-  if (!yt.jevEnabled || !Array.isArray(payload?.texts) || payload.texts.length === 0) {
-    return doTranslateFn(payload);
-  }
-
-  const jev = new LayaDecisionEngine();
-
-  const texts = payload.texts.map(text => text.replace(/\[(?:music|applause|laughter|silence|音楽|拍手|笑い|歓声)\]/gi, ' ').trim());
-  // 來源是播放器的真實字幕，遠端 noise 判斷不可刪除車型、人名或殘句。
-  // 字幕過濾只處理明確音效；Laya 的語意分句仍走 EVALUATE_YT_BOUNDARIES。
-  const verdicts = texts.map(text => jev.fallbackEvaluate(text, settings.targetLanguage));
-
-  const needsTransIndices = [];
-  const toTranslateTexts = [];
-
-  for (let i = 0; i < texts.length; i++) {
-    const v = verdicts[i];
-    if (v && v.is_valid && v.needs_translation) {
-      needsTransIndices.push(i);
-      toTranslateTexts.push(texts[i]);
-    }
-  }
-
-  // 若全部都需要翻譯，直接走原翻譯邏輯
-  if (needsTransIndices.length === texts.length) {
-    return doTranslateFn({ ...payload, texts });
-  }
-
-  // 建立結果陣列
-  const finalResults = new Array(texts.length).fill('');
-  for (let i = 0; i < texts.length; i++) {
-    const v = verdicts[i];
-    if (!v || !v.is_valid) {
-      finalResults[i] = '';
-    } else if (!v.needs_translation) {
-      finalResults[i] = texts[i];
-    }
-  }
-
-  // 若有需要翻譯的子集，呼叫翻譯引擎
-  let translationUsage = null;
-  if (toTranslateTexts.length > 0) {
-    const subPayload = { ...payload, texts: toTranslateTexts };
-    const subRes = await doTranslateFn(subPayload);
-    if (!subRes?.ok) return subRes;
-    translationUsage = subRes.usage;
-    const translatedSub = subRes.result || [];
-    for (let j = 0; j < needsTransIndices.length; j++) {
-      finalResults[needsTransIndices[j]] = translatedSub.length === toTranslateTexts.length
-        ? (translatedSub[j] ?? null) : null;
-    }
-  }
-
-  return {
-    ok: true,
-    result: finalResults,
-    usage: translationUsage,
-    jevFiltered: true,
-    // 明確空白（音效）與模型漏回必須區分，content 端才能正確補翻。
-    intentionalEmpty: verdicts.flatMap((v, i) => v && !v.is_valid ? [i] : []),
-  };
+// Subtitle decisions run before translation and before returning visible output.
+async function applyJevSubtitleFilter(payload, settings, doTranslateFn, asr = false) {
+  const run = asr ? runAsrDecisionPipeline : runSubtitleDecisionPipeline;
+  return run(payload, settings, doTranslateFn, {
+    log: report => debugLog(report.unresolved || report.errors.length ? 'warn' : 'info',
+      'youtube', 'Laya subtitle pipeline', report),
+  });
 }
 
 // ─── 訊息路由（handler map 取代 if-else 鏈） ──────────────────
@@ -877,7 +823,8 @@ const messageHandlers = {
       // ytSubtitle.pricing 非空時傳入，讓 handleTranslate 用正確計價計算費用
       const pricingOverride = (yt.pricing && yt.pricing.inputPerMTok != null) ? yt.pricing : null;
       // v1.5.8: 字幕路徑預設不套用固定術語表 / 黑名單，使用者可在 YouTube 字幕分頁開 toggle
-      return applyJevSubtitleFilter(payload, s, (p) => handleTranslate(p, sender, geminiOverrides, pricingOverride, '_yt',
+      return applyJevSubtitleFilter(payload, s, (p) => handleTranslate(p, sender,
+        { ...geminiOverrides, systemInstruction: subtitleRepairPrompt(geminiOverrides.systemInstruction, p) }, pricingOverride, '_yt',
         yt.applyFixedGlossary === true,
         yt.applyForbiddenTerms === true,
         {
@@ -1064,7 +1011,8 @@ const messageHandlers = {
         : getEffectiveSubtitleSystemPrompt(s.targetLanguage, yt.systemPrompt) };
       // v1.5.8: 字幕路徑同 Gemini 字幕路徑，預設不套用固定術語表 / 黑名單
       return queueLocalSubtitle(s.customProvider, () => applyJevSubtitleFilter(payload, s, (p) =>
-        handleTranslateCustom(local ? { ...p, docBatchSize: 1 } : p, sender, '_oc_yt', overrides,
+        handleTranslateCustom(local ? { ...p, docBatchSize: 1 } : p, sender, '_oc_yt',
+          { ...overrides, systemPrompt: subtitleRepairPrompt(overrides.systemPrompt, p) },
           yt.applyFixedGlossary === true,
           yt.applyForbiddenTerms === true,
           { customPrompt: local ? overrides.systemPrompt : customPromptForKey(yt.systemPrompt, getEffectiveSubtitleSystemPrompt) })));
@@ -1086,8 +1034,10 @@ const messageHandlers = {
         systemPrompt: getEffectiveAsrSubtitleSystemPrompt(s.targetLanguage, payload?.sourceLanguage || 'en'),
         temperature: yt.temperature ?? 0.1,
       };
-      return queueLocalSubtitle(s.customProvider, () => handleTranslateCustom(payload, sender, '_oc_yt_asr', overrides, false, false,
-        { temperatureDefault: DEFAULT_SETTINGS.ytSubtitle.temperature }));
+      return queueLocalSubtitle(s.customProvider, () => applyJevSubtitleFilter(payload, s, p =>
+        handleTranslateCustom(p, sender, '_oc_yt_asr',
+          { ...overrides, systemPrompt: subtitleRepairPrompt(overrides.systemPrompt, p) }, false, false,
+          { temperatureDefault: DEFAULT_SETTINGS.ytSubtitle.temperature }), true));
     },
   },
   // Drive 影片 ASR 字幕走自訂 Provider 時的入口。跟 TRANSLATE_ASR_SUBTITLE_BATCH_CUSTOM
@@ -1102,8 +1052,9 @@ const messageHandlers = {
         systemPrompt: getEffectiveAsrSubtitleSystemPrompt(s.targetLanguage, payload?.sourceLanguage || 'en'),
         temperature: yt.temperature ?? 0.1,
       };
-      return handleTranslateCustom(payload, sender, '_oc_drive_yt_asr', overrides, false, false,
-        { temperatureDefault: DEFAULT_SETTINGS.ytSubtitle.temperature });
+      return applyJevSubtitleFilter(payload, s, p => handleTranslateCustom(p, sender, '_oc_drive_yt_asr',
+        { ...overrides, systemPrompt: subtitleRepairPrompt(overrides.systemPrompt, p) }, false, false,
+        { temperatureDefault: DEFAULT_SETTINGS.ytSubtitle.temperature }), true);
     },
   },
   // v1.6.1: 使用者點 toast 內「下載」連結或「×」時，標記今日已顯示更新提示（每日節流）
@@ -2135,7 +2086,7 @@ async function handleTranslateGoogle(payload, sender, cacheSuffix) {
     : cacheSuffix;
 
   // 1. 先查快取（與 Gemini 快取共用 cache module，但 key suffix 不同）
-  const cached = await cache.getBatch(texts, effectiveCacheSuffix);
+  const cached = payload.skipCache === true ? texts.map(() => null) : await cache.getBatch(texts, effectiveCacheSuffix);
   const missingIdxs = [];
   const missingTexts = [];
   cached.forEach((tr, i) => {
@@ -2178,7 +2129,7 @@ async function handleTranslateGoogle(payload, sender, cacheSuffix) {
     });
 
     // 3. 寫回快取
-    await cache.setBatch(missingTexts, fresh, effectiveCacheSuffix);
+    if (!payload.deferSubtitleCache) await cache.setBatch(missingTexts, fresh, effectiveCacheSuffix);
 
     // 4. 記錄用量（費用 $0，以字元計）
     // v1.5.7: 走 upsertGoogleUsage 合併同一篇 URL 一小時內的批次到單一紀錄，
@@ -2207,6 +2158,10 @@ async function handleTranslateGoogle(payload, sender, cacheSuffix) {
 
   return {
     result,
+    ...(payload.deferSubtitleCache ? { commitSubtitleCache: async approved => {
+      const indices = approved.flatMap((value, i) => typeof value === 'string' && value.trim() ? [i] : []);
+      await cache.setBatch(indices.map(i => texts[i]), indices.map(i => approved[i]), effectiveCacheSuffix);
+    } } : {}),
     usage: { engine: 'google', chars: totalChars, cacheHits },
   };
 }

@@ -190,7 +190,9 @@ export function createTranslatePipeline(deps) {
         costUSD: billing.costUSD,
         tabUrl: sender?.tab?.url,
       });
-      await writeBatchCache({ missingTexts, fresh, cacheKeySuffix, targetLanguage: settings.targetLanguage, logLabel });
+      if (!ctx.payload?.deferSubtitleCache) {
+        await writeBatchCache({ missingTexts, fresh, cacheKeySuffix, targetLanguage: settings.targetLanguage, logLabel });
+      }
     }
 
     const billing = computeBilling(batchUsage, pricing, cachedRate);
@@ -208,6 +210,11 @@ export function createTranslatePipeline(deps) {
     missingIdxs.forEach((idx, k) => { result[idx] = fresh[k]; });
     return {
       result,
+      ...(ctx.payload?.deferSubtitleCache ? { commitSubtitleCache: async approved => {
+        const indices = approved.flatMap((value, i) => typeof value === 'string' && value.trim() ? [i] : []);
+        await writeBatchCache({ missingTexts: indices.map(i => prep.texts[i]), fresh: indices.map(i => approved[i]),
+          cacheKeySuffix, targetLanguage: settings.targetLanguage, logLabel });
+      } } : {}),
       usage: {
         // 原始（未套 implicit cache 折扣）數字，保留給 content 端算 hit% / saved%
         inputTokens: batchUsage.inputTokens,

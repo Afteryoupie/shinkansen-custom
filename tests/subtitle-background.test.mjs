@@ -22,7 +22,10 @@ function unit(text, startMs, keys = [text.toLowerCase()]) {
   return { text, keys, _cue: { startMs, endMs: startMs + 2000, sourceText: text, segStarts: [startMs] } };
 }
 test('Repeated dialogue gets its own cue despite identical source key', async () => {
-  const SK = setup([unit('>> Yeah.', 233840), unit('>> Yeah.', 658000)], async () => ({ ok: true, result: ['對'] }));
+  const SK = setup([unit('>> Yeah.', 233840), unit('>> Yeah.', 658000)], async ({payload}) => {
+    assert.deepEqual(Array.from(payload.texts), ['Yeah.']);
+    return { ok: true, result: ['>> 對'] };
+  });
   await SK._startBackgroundTranslationWorker();
   assert.equal(SK.YT.displayCues.length, 2);
   assert.equal(SK._findActiveCue(659000).targetText, '對');
@@ -103,4 +106,21 @@ test('Native captions remain visible until a translated cue is ready', () => {
   assert.equal(classes.has('shinkansen-asr-ready'),true);
   SK._syncAsrNativeVisibility(null);
   assert.equal(classes.has('shinkansen-asr-ready'),false);
+});
+
+test('A format repair rejected by background is not immediately retried again by the content script', async () => {
+  let calls = 0;
+  const SK = setup([], async () => { calls++; return {ok:true,result:[null],decisionRejected:[0]}; });
+  const res = await SK._translateSubtitleTexts(['Hello'], 'TEST', 0);
+  assert.equal(calls, 1);
+  assert.equal(res.result[0], null);
+});
+
+test('Explicitly preserved original text bypasses target-language heuristics', async () => {
+  const SK = setup([], async ({payload}) => {
+    assert.equal(payload.sourceLanguage, 'en');
+    return {ok:true,result:['Mighty Car Mods'],preservedIndices:[0]};
+  });
+  const res = await SK._translateSubtitleTexts(['Mighty Car Mods'], 'TEST', 0);
+  assert.equal(res.result[0], 'Mighty Car Mods');
 });
