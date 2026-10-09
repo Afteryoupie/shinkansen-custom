@@ -1,0 +1,8 @@
+# Isolated runtime: python -m venv watchdog/.venv
+# watchdog/.venv/bin/python -m pip install -r watchdog/requirements-laya.txt
+# On AMD use an appropriate ROCm torch wheel instead of the macOS/CPU wheel.
+laya==0.4.1
+torch==2.14.1
+transformers==5.19.0
+huggingface-hub==1.33.0
+safetensors==0.8.0

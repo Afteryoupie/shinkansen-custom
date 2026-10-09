@@ -3083,7 +3083,7 @@
   // 一樣形態，不用 ASR 專用的 JSON timestamp prompt)。實際訊息類型依 engine 由
   // SK.getSubtitleBatchType 路由：google → _GOOGLE / openai-compat → _CUSTOM / 其餘 → Gemini。
   async function _refineAsrBoundaries(segments, config) {
-    if (!config?.jevEnabled || !config.jevApiKey || segments.length < 2) return segments;
+    if (!config?.jevEnabled || segments.length < 2) return segments;
     try {
       const response = await SK.safeSendMessage({
         type: 'EVALUATE_YT_BOUNDARIES',

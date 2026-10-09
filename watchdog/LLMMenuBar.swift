@@ -38,6 +38,11 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
     private var primaryItem: NSMenuItem!
     private var autoItem: NSMenuItem!
     private var modelsItem: NSMenuItem!
+    private var decisionItem: NSMenuItem!
+    private var decisionToggle: NSMenuItem!
+    private var decisionAuto: NSMenuItem!
+    private var decisionInfo: NSMenuItem!
+    private var decisionSnapshot: [String: Any] = [:]
     private var quitItem: NSMenuItem!
     private var refreshItem: NSMenuItem!
     private var timer: Timer?
@@ -92,6 +97,22 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
         primaryItem = item("啟動模型", "power", #selector(toggleEngine))
         autoItem = item("閒置時自動休眠", "timer", #selector(toggleAutoSleep))
         menu.addItem(.separator())
+        let decisionMenu = NSMenu()
+        decisionMenu.autoenablesItems = false
+        decisionItem = NSMenuItem(title: "決策模型 · Laya multilingual", action: nil, keyEquivalent: "")
+        decisionItem.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)
+        decisionItem.submenu = decisionMenu
+        decisionInfo = NSMenuItem(title: "休眠待命", action: nil, keyEquivalent: "")
+        decisionInfo.isEnabled = false
+        decisionMenu.addItem(decisionInfo)
+        decisionToggle = NSMenuItem(title: "啟動決策模型", action: #selector(toggleDecision), keyEquivalent: "")
+        decisionToggle.target = self
+        decisionMenu.addItem(decisionToggle)
+        decisionAuto = NSMenuItem(title: "閒置 3 分鐘後自動休眠", action: #selector(toggleDecisionAuto), keyEquivalent: "")
+        decisionAuto.target = self
+        decisionMenu.addItem(decisionAuto)
+        menu.addItem(decisionItem)
+        menu.addItem(.separator())
         item("開啟控制台", "rectangle.grid.2x2", #selector(openWebDashboard), key: "d")
         item("複製 API 網址", "doc.on.doc", #selector(copyApiUrl), key: "c")
         refreshItem = item("重新連線", "arrow.clockwise", #selector(reconnect))
@@ -141,6 +162,7 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
                 self.activeRequests = json["active_requests"] as? Int ?? 0
                 self.autoSleepEnabled = json["auto_sleep_enabled"] as? Bool ?? true
                 self.availableModels = json["models"] as? [[String: Any]] ?? []
+                self.decisionSnapshot = json["decision"] as? [String: Any] ?? [:]
                 if !self.isMenuOpen { self.rebuildModels() }
                 self.refreshPresentation()
             }
@@ -192,7 +214,18 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
         }
         refreshItem.isHidden = isConnected
         quitItem.isEnabled = !busy
-        updateIcon(status: isConnected ? currentStatus : "disconnected")
+        let decisionStatus = decisionSnapshot["status"] as? String ?? "sleeping"
+        let decisionActive = decisionSnapshot["active_requests"] as? Int ?? 0
+        let hasDecision = !(decisionSnapshot["models"] as? [[String: Any]] ?? []).isEmpty
+        let decisionRunning = decisionStatus == "running"
+        decisionInfo.title = decisionStatus == "starting" ? "載入中…" : decisionRunning ? (decisionActive > 0 ? "處理中" : "準備就緒 · \(String(describing: decisionSnapshot["device"] ?? "local").uppercased())") : "休眠待命"
+        decisionItem.title = "決策模型 · Laya multilingual · " + decisionInfo.title
+        decisionItem.isEnabled = isConnected && hasDecision
+        decisionToggle.title = decisionStatus == "starting" ? "模型載入中…" : decisionRunning ? "決策模型休眠" : "啟動決策模型"
+        decisionToggle.isEnabled = isConnected && hasDecision && !busy && decisionStatus != "starting" && decisionActive == 0 && decisionSnapshot["runtime_available"] as? Bool != false
+        decisionAuto.state = decisionSnapshot["auto_sleep_enabled"] as? Bool == false ? .off : .on
+        decisionAuto.isEnabled = isConnected && hasDecision && !busy
+        updateIcon(status: isConnected ? (running || starting ? currentStatus : decisionStatus) : "disconnected")
     }
 
     private func rebuildModels() {
@@ -216,7 +249,7 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
     // artwork follows macOS appearance; expression alone communicates activity.
     private func guardianIcon(status: String) -> NSImage {
         let awake = status == "running" || status == "starting"
-        let speaking = status == "running" && activeRequests > 0
+        let speaking = status == "running" && (activeRequests > 0 || (decisionSnapshot["active_requests"] as? Int ?? 0) > 0)
         let image = NSImage(size: NSSize(width: 24, height: 18), flipped: false) { _ in
             guard let c = NSGraphicsContext.current?.cgContext else { return false }
             c.saveGState()
@@ -271,7 +304,7 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
         guard let button = statusItem.button else { return }
         button.title = ""
         button.image = guardianIcon(status: status)
-        let labels = ["running": activeRequests > 0 ? "運行中 · 處理請求" : "準備就緒", "starting": "正在載入", "sleeping": "休眠待命", "disconnected": "尚未連線"]
+        let labels = ["running": activeRequests > 0 || (decisionSnapshot["active_requests"] as? Int ?? 0) > 0 ? "運行中 · 處理請求" : "準備就緒", "starting": "正在載入", "sleeping": "休眠待命", "disconnected": "尚未連線"]
         let label = "LLM watchdog · \(labels[status] ?? "狀態未知") · \(currentModel)"
         button.toolTip = label
         button.setAccessibilityLabel(label)
@@ -317,6 +350,8 @@ class LLMMenuBarController: NSObject, NSMenuDelegate {
     }
     @objc private func toggleEngine() { perform(currentStatus == "running" ? "sleep" : "wake") }
     @objc private func toggleAutoSleep() { perform("toggle_auto_sleep") }
+    @objc private func toggleDecision() { perform(decisionSnapshot["status"] as? String == "running" ? "decision/sleep" : "decision/wake") }
+    @objc private func toggleDecisionAuto() { perform("decision/toggle_auto_sleep") }
     @objc private func reconnect() { feedback = nil; fetchStatus() }
     @objc private func copyApiUrl() {
         NSPasteboard.general.clearContents()

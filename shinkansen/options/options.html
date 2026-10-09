@@ -1162,25 +1162,25 @@
 
     <section>
       <p class="muted">字幕選擇順序：優先原生中文字幕，其次翻譯原生英文字幕；自動字幕使用影片原始語言。繁簡不一致時依目標語言轉換。</p>
-      <h2>⚡ JEV 類型化決策 (System One)</h2>
+      <h2>Laya 本機決策模型</h2>
       <p class="muted">
-        利用 Jev 進行次秒級類型化決策，自動過濾雜訊/純音效標籤（如 [Music]、[Applause]、♪）並智慧分流繁中/通用詞，免除無謂 LLM 呼叫。未啟用或逾時時自動無縫降級走本地啟發式規則。
+        透過 LLM watchdog 的 Laya multilingual 判斷自動字幕的句子邊界。判斷不明確或服務失敗時沿用本地分句規則；只過濾明確音效標籤，保留真實對話。
       </p>
       <label class="checkbox-label">
         <input type="checkbox" id="ytJevEnabled">
-        <strong>開啟 JEV 決策過濾</strong>
+        <strong>開啟 Laya 字幕決策</strong>
         <small class="muted">
-          開啟時自動執行字幕有效性與翻譯需求判定；可填入 TypeSafe AI API Key，或留空使用純本地啟發式決策。
+          不需 API Key。閒置後會自動卸載模型，下一次請求由 Watchdog 喚醒。
         </small>
       </label>
       <div id="yt-jev-config-block" style="margin-top: 8px;">
         <label>
-          <span>JEV API Key（可選）</span>
-          <input type="password" id="ytJevApiKey" placeholder="留空時自動走純本地規則">
+          <span>決策 API Key（自訂服務可選，本機留空）</span>
+          <input type="password" id="ytJevApiKey" placeholder="本機 Laya 不需要金鑰">
         </label>
         <label>
-          <span>JEV API URL</span>
-          <input type="text" id="ytJevApiUrl" placeholder="https://api.typesafe.ai/v1/systemone">
+          <span>決策 API 網址</span>
+          <input type="text" id="ytJevApiUrl" placeholder="http://127.0.0.1:8080/v1/systemone">
         </label>
       </div>
     </section>

@@ -23,6 +23,7 @@ from watchdog.config import PUBLIC_PORT, LLM_INTERNAL_PORT
 from watchdog.state import state
 from watchdog.manager import scan_models, start_llm, stop_llm, switch_model
 from watchdog.dashboard import render_dashboard
+from watchdog.decision import decision, validate_payload
 
 _proxy_tasks = set()
 
@@ -38,6 +39,30 @@ async def send_model_error(writer, status, message):
 
 def find_requested_model(requested):
     return next((m for m in state.models if requested in (m["id"], m.get("name"), m.get("path"))), None)
+
+
+async def send_json(writer, payload, status="200 OK"):
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    writer.write((f"HTTP/1.1 {status}\r\nContent-Type: application/json; charset=utf-8\r\n"
+                  f"Access-Control-Allow-Origin: *\r\nContent-Length: {len(body)}\r\n"
+                  "Connection: close\r\n\r\n").encode() + body)
+    await writer.drain()
+
+
+async def read_decision_body(reader, initial_data):
+    head, _, body = initial_data.partition(b"\r\n\r\n")
+    lengths = []
+    for line in head.split(b"\r\n")[1:]:
+        if line.lower().startswith(b"transfer-encoding:"):
+            raise ValueError("Use Content-Length for decision requests")
+        if line.lower().startswith(b"content-length:"):
+            lengths.append(int(line.split(b":", 1)[1]))
+    if len(lengths) != 1 or not 0 < lengths[0] <= 256 * 1024:
+        raise ValueError("Expected Content-Length up to 256 KiB")
+    length = lengths[0]
+    if len(body) < length:
+        body += await asyncio.wait_for(reader.readexactly(length - len(body)), 30)
+    return validate_payload(json.loads(body[:length]))
 
 
 async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
@@ -83,6 +108,42 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
             return
 
         # ── REST API 端點 ────────────────────────────────────
+
+        if path == "/v1/systemone":
+            if method != "POST":
+                await send_model_error(client_writer, "405 Method Not Allowed", "Use POST for typed decisions")
+                return
+            try:
+                payload = await read_decision_body(client_reader, initial_data)
+            except (ValueError, UnicodeDecodeError, asyncio.IncompleteReadError, asyncio.TimeoutError) as error:
+                await send_model_error(client_writer, "400 Bad Request", str(error))
+                return
+            try:
+                result = await decision.evaluate(payload)
+                await send_json(client_writer, result)
+            except Exception as error:
+                await send_model_error(client_writer, "503 Service Unavailable", str(error))
+            return
+
+        if path == "/api/decision/status" and method == "GET":
+            await send_json(client_writer, decision.status())
+            return
+
+        if path in ("/api/decision/wake", "/api/decision/sleep", "/api/decision/toggle_auto_sleep") and method in ("POST", "GET"):
+            try:
+                if path.endswith("/wake"):
+                    await decision.wake()
+                elif path.endswith("/sleep"):
+                    if decision.active_requests or decision.starting or decision.lock.locked():
+                        await send_model_error(client_writer, "409 Conflict", "決策模型正在處理請求，請稍後重試")
+                        return
+                    decision.stop()
+                else:
+                    decision.auto_sleep = not decision.auto_sleep
+                await send_json(client_writer, {"status": "ok", "decision": decision.status()})
+            except Exception as error:
+                await send_json(client_writer, {"status": "error", "message": str(error)}, "503 Service Unavailable")
+            return
 
         # 0. GET /health or /api/health：健康檢查端點
         if path in ("/health", "/api/health") and method == "GET":
@@ -139,6 +200,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 "auto_sleep_enabled": state.auto_sleep_enabled,
                 "active_requests": state.active_requests,
                 "models": state.models,
+                "decision": decision.status(),
             }
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             resp = (
@@ -245,6 +307,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
         # 5. POST /api/stop 或 GET /stop：完全停止
         if path in ("/api/stop", "/stop", "/shutdown"):
             stop_llm()
+            decision.stop()
             state.should_exit = True
             body = b'{"status":"stopped"}' if path.startswith("/api") else "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LLM watchdog已停止</title><style>body{font-family:Segoe UI,-apple-system,BlinkMacSystemFont,sans-serif;background:#1c2833;color:#DCDDD8;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;} .box{background:#273746;border:1px solid #475F77;border-top:3.5px solid #D74B4B;padding:36px;border-radius:14px;text-align:center;box-shadow:0 20px 45px rgba(0,0,0,0.5);max-width:480px;} h1{color:#D74B4B;font-size:20px;margin-bottom:12px;} p{color:#9cb1c4;font-size:14px;line-height:1.6;}</style></head><body><div class=\"box\"><h1>🛑 LLM watchdog已完全關閉</h1><p>顯存與系統記憶體已 100% 釋放，您可以安心關閉此分頁。</p></div></body></html>".encode("utf-8")
             ct = "application/json" if path.startswith("/api") else "text/html; charset=utf-8"
@@ -323,6 +386,8 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 "idle_remaining": rem,
                 "auto_sleep_enabled": state.auto_sleep_enabled,
                 "models": state.models,
+                "active_requests": state.active_requests,
+                "decision": decision.status(),
             }
 
             html = render_dashboard(initial_state, PUBLIC_PORT)

@@ -1,0 +1,63 @@
+# Laya multilingual 決策模型
+
+Watchdog 的「決策模型」區塊管理 Laya multilingual，和翻譯／聊天模型分別啟停。
+macOS 選單列、Windows 系統匣及網頁控制台均可啟動、休眠和切換自動休眠。
+推論請求自動喚醒模型，閒置 180 秒卸載，正在處理的請求不會觸發休眠。
+
+- 公共決策端點：`http://127.0.0.1:8080/v1/systemone`
+- 狀態：`GET /api/decision/status`，也包含在 `/api/status` 的 `decision` 欄位。
+- 控制：`POST /api/decision/wake`、`/api/decision/sleep`、`/api/decision/toggle_auto_sleep`。
+- 內部服務只監聽 `127.0.0.1:8082`。翻譯服務仍使用 8081。
+- 模型不會列入 OpenAI 聊天模型清單，不會因決策請求切換翻譯模型。
+- 模型記錄：系統暫存目錄中的 `llm-watchdog-laya.log`。
+
+## 安裝
+
+模型來源：[convaiinnovations/laya-multilingual](https://huggingface.co/convaiinnovations/laya-multilingual)。
+本次使用版本 `1720e3e3357cfe1e281542e223f8273b0890ca34`，權重及 tokenizer 共約 678 MB。
+本機下載目錄為 `~/LLM/Models/Laya-Multilingual`；`download-manifest.json` 記錄版本、檔案大小及 SHA256。
+權重、encoder 設定及 tokenizer 已完整下載，載入時使用離線模式。
+
+在儲存庫根目錄建立獨立 Python 環境，不修改既有翻譯引擎的環境：
+
+```sh
+python3 -m venv watchdog/.venv
+watchdog/.venv/bin/python -m pip install -r watchdog/requirements-laya.txt
+hf download convaiinnovations/laya-multilingual \
+  --revision 1720e3e3357cfe1e281542e223f8273b0890ca34 \
+  --local-dir ~/LLM/Models/Laya-Multilingual
+```
+
+Windows 的 Python 路徑為 `watchdog/.venv/Scripts/python.exe`。模型預設位於 Watchdog
+模型目錄下的 `Laya-Multilingual`。可用 `LAYA_MODEL_DIR` 和 `LAYA_PYTHON` 覆寫路徑。
+
+M3 已以 PyTorch MPS（Metal）實測。裝有 ROCm PyTorch 的 AMD 系統會使用
+`torch.cuda` 介面；需依作業系統與顯卡安裝相容的 ROCm wheel，不能使用 macOS wheel。
+Windows 系統匣控制以模擬介面測試，RX 9070 GRE 的實際 GPU 推論尚未驗證。
+服務自動選擇可用裝置，沒有 GPU 時使用 CPU；`LAYA_DEVICE` 可指定 `mps`、`cuda` 或 `cpu`。
+
+## 新幹線
+
+重新載入擴充功能後，舊 Jev 設定會轉為本機 Laya 並啟用。不需金鑰。
+既有 `jevEnabled`、`jevApiUrl` 與字幕邊界欄位保留以兼容已開啟的內容腳本；
+設定頁及實際 provider 改為 Laya，新增 `decisionBackend: "laya"` 標記避免反覆遷移。
+
+API 接受 `{model, state, questions}`，回傳 `{model, answers, usage, device, latency_ms}`。
+支援 `noul`、`choice`、`score`，每次最多 32 個問題，HTTP body 上限 256 KiB。
+`jev-latest` 為相容的模型名稱別名，實際執行的始終是本機 Laya。
+
+字幕斷句將每個 left/right 邊界獨立批次推論，避免長影片上下文超過模型的
+1024-token 預設長度。使用中立 A/B choice 後轉回 noul 格式，減少直接 noul 的標籤偏差。
+只有機率達 0.8 或低於 0.2 時提供邊界提示，其餘保留本地規則。
+模型輸出的機率尚未校準，不能把門檻視為準確率保證。即使決策服務失敗，
+字幕仍保留原始片段、時間和本地分句的長度／停頓限制。
+
+## 驗證
+
+```sh
+node --test tests/subtitle-jev.test.mjs tests/subtitle-background.test.mjs tests/subtitle-splitting.test.mjs tests/extension-ui.test.mjs
+watchdog/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+```
+
+Windows 系統匣測試另需 pystray、Pillow。
+單元測試使用模擬決策後端；M3 的實際載入、推論、HTTP 端點與釋放記憶體另以本機服務驗證。

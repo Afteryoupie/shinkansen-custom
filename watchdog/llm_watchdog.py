@@ -34,6 +34,7 @@ from watchdog.config import (
     PID_FILE,
 )
 from watchdog.state import state
+from watchdog.decision import decision
 from watchdog.manager import (
     init_models,
     stop_llm,
@@ -47,6 +48,7 @@ def cleanup():
     """清理退出處理：停止 LLM 並刪除 PID 檔"""
     print("\n[🛑 關閉] 正在關閉LLM watchdog與 LLM...", flush=True)
     stop_llm()
+    decision.stop()
     if PID_FILE.exists():
         try:
             PID_FILE.unlink()

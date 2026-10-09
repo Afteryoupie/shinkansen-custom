@@ -33,6 +33,7 @@ from watchdog.config import (
     is_translation_model,
 )
 from watchdog.state import state
+from watchdog.decision import decision
 
 def find_matching_mmproj(model_name: str) -> Optional[str]:
     """為 VL / 視覺多模態模型尋找對應的 mmproj 權重檔"""
@@ -77,6 +78,10 @@ def scan_models() -> List[Dict[str, Any]]:
 
     for entry in sorted(MODELS_DIR.iterdir()):
         if entry.name.startswith("."):
+            continue
+
+        # Typed-decision encoders are managed independently, never as chat/MLX models.
+        if entry.is_dir() and (entry / "rl_agent_config.json").is_file():
             continue
 
         # 排除 mmproj 視覺權重檔，不作為單獨 LLM 列出
@@ -435,6 +440,7 @@ async def idle_checker():
     while not state.should_exit:
         try:
             await asyncio.sleep(2)
+            decision.check_idle()
             if not state.auto_sleep_enabled:
                 continue
             if not state.is_starting and state.llm_proc and state.llm_proc.poll() is None and state.active_requests == 0:

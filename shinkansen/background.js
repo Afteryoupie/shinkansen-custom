@@ -2,7 +2,7 @@
 // 職責：接收翻譯請求、呼叫 Gemini API、處理快取、處理快捷鍵、統一除錯 Log。
 
 import { browser } from './lib/compat.js';
-import { JevDecisionEngine } from './lib/jev.js';
+import { LayaDecisionEngine } from './lib/jev.js';
 import { isLocalSubtitleProvider, queueLocalSubtitle, localSubtitlePrompt } from './lib/local-subtitle.js';
 import { IS_IOS_BUILD } from './lib/distribution.js'; // Phase 2: host app 設定橋接只在 iOS build 走 native messaging
 import { translateBatch, extractGlossary, extractTermRenderings, translateBatchStream, summarizeArticle } from './lib/gemini.js';
@@ -647,11 +647,11 @@ async function applyJevSubtitleFilter(payload, settings, doTranslateFn) {
     return doTranslateFn(payload);
   }
 
-  const jev = new JevDecisionEngine();
+  const jev = new LayaDecisionEngine();
 
   const texts = payload.texts.map(text => text.replace(/\[(?:music|applause|laughter|silence|音楽|拍手|笑い|歓声)\]/gi, ' ').trim());
   // 來源是播放器的真實字幕，遠端 noise 判斷不可刪除車型、人名或殘句。
-  // 字幕過濾只處理明確音效；Jev 的語意分句仍走 EVALUATE_YT_BOUNDARIES。
+  // 字幕過濾只處理明確音效；Laya 的語意分句仍走 EVALUATE_YT_BOUNDARIES。
   const verdicts = texts.map(text => jev.fallbackEvaluate(text, settings.targetLanguage));
 
   const needsTransIndices = [];
@@ -1413,7 +1413,7 @@ const messageHandlers = {
     handler: async (payload) => {
       const settings = await getSettingsCached();
       const yt = settings.ytSubtitle || {};
-      const engine = new JevDecisionEngine({ enabled: yt.jevEnabled, apiKey: yt.jevApiKey, apiUrl: yt.jevApiUrl });
+      const engine = new LayaDecisionEngine({ enabled: yt.jevEnabled, apiKey: yt.jevApiKey, apiUrl: yt.jevApiUrl });
       const segments = Array.isArray(payload?.segments) ? payload.segments.slice(0, 129) : [];
       return { ok: true, ...await engine.evaluateBoundaries(segments) };
     },

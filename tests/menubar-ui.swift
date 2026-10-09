@@ -16,6 +16,17 @@ extension LLMMenuBarController {
         assert(modelsItem.title == currentModel && modelsItem.submenu === modelsMenu)
         assert(panel.countdown.font!.pointSize == 17)
         assert(autoItem.state == .on)
+        decisionSnapshot = ["status": "sleeping", "models": [["id": "laya-multilingual"]], "runtime_available": true]
+        refreshPresentation()
+        assert(decisionItem.isEnabled && decisionToggle.title == "啟動決策模型")
+        assert(decisionToggle.isEnabled)
+        decisionSnapshot["status"] = "running"
+        decisionSnapshot["device"] = "mps"
+        decisionSnapshot["active_requests"] = 1
+        refreshPresentation()
+        assert(decisionToggle.title == "決策模型休眠" && !decisionToggle.isEnabled)
+        decisionSnapshot = [:]
+        refreshPresentation()
         let readyArtwork = statusItem.button!.image!.tiffRepresentation!
         assert(statusItem.button!.toolTip!.contains("準備就緒"))
         activeRequests = 1; refreshPresentation()

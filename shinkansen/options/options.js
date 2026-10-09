@@ -283,7 +283,7 @@ async function load() {
   $('ytAsrProgressive').checked = yt.asrMode !== 'heuristic';
   if ($('ytJevEnabled')) $('ytJevEnabled').checked = yt.jevEnabled === true;
   if ($('ytJevApiKey')) $('ytJevApiKey').value = yt.jevApiKey || '';
-  if ($('ytJevApiUrl')) $('ytJevApiUrl').value = yt.jevApiUrl || 'https://api.typesafe.ai/v1/systemone';
+  if ($('ytJevApiUrl')) $('ytJevApiUrl').value = yt.jevApiUrl || 'http://127.0.0.1:8080/v1/systemone';
   // v1.5.8: 字幕是否套用固定術語表 / 黑名單
   $('ytApplyFixedGlossary').checked  = yt.applyFixedGlossary  === true;
   $('ytApplyForbiddenTerms').checked = yt.applyForbiddenTerms === true;
@@ -1082,8 +1082,9 @@ async function _saveImpl() {
       // v1.6.23: ASR 分句單一 toggle——checked=progressive（混合）、unchecked=heuristic
       asrMode: $('ytAsrProgressive').checked ? 'progressive' : 'heuristic',
       jevEnabled: $('ytJevEnabled')?.checked === true,
+      decisionBackend: 'laya',
       jevApiKey:  $('ytJevApiKey')?.value?.trim() || '',
-      jevApiUrl:  $('ytJevApiUrl')?.value?.trim() || 'https://api.typesafe.ai/v1/systemone',
+      jevApiUrl:  $('ytJevApiUrl')?.value?.trim() || 'http://127.0.0.1:8080/v1/systemone',
       // v1.5.8: 字幕是否套用固定術語表 / 黑名單
       applyFixedGlossary:  $('ytApplyFixedGlossary').checked,
       applyForbiddenTerms: $('ytApplyForbiddenTerms').checked,

@@ -97,12 +97,12 @@ test('Local filter preserves farewell, subscribe dialogue and Han-only Japanese'
   }
   assert.equal(engine.fallbackEvaluate('[Music]').is_valid, false);
 });
-test('Current TypeSafe request/response contract and uncertainty handling', async () => {
+test('Local Laya request/response contract and uncertainty handling', async () => {
   const original = globalThis.fetch;
   try {
     globalThis.fetch = async (_, init) => {
       const request = JSON.parse(init.body);
-      assert.equal(request.model, 'jev-latest');
+      assert.equal(request.model, 'laya-multilingual');
       assert.ok(request.state.boundaries[0].left);
       assert.equal(request.questions.boundary_0.type, 'noul');
       return { ok: true, json: async () => ({ answers: {
@@ -114,7 +114,7 @@ test('Current TypeSafe request/response contract and uncertainty handling', asyn
     assert.deepEqual((await engine.evaluateBoundaries(segs(['a', 'b', 'c', 'd']))).breakBefore, [null, true, false, null]);
   } finally { globalThis.fetch = original; }
 });
-test('HTTP errors, malformed results and missing keys retain local decisions', async () => {
+test('HTTP errors, malformed results and disabled decisions retain local decisions', async () => {
   const original = globalThis.fetch;
   try {
     const engine = new JevDecisionEngine({ enabled: true, apiKey: 'test' });
@@ -124,7 +124,7 @@ test('HTTP errors, malformed results and missing keys retain local decisions', a
     globalThis.fetch = async () => ({ ok: true, json: async () => ({ decisions: {} }) });
     assert.equal((await engine.evaluateBatch(['hello']))[0].needs_translation, true);
     globalThis.fetch = async () => { throw Error('must not call'); };
-    assert.equal((await new JevDecisionEngine({ enabled: true }).evaluateBoundaries(segs(['a', 'b']))).source, 'fallback');
+    assert.equal((await new JevDecisionEngine({ enabled: false }).evaluateBoundaries(segs(['a', 'b']))).source, 'fallback');
   } finally { globalThis.fetch = original; }
 });
 test('Response body timeout is covered and recovers without dropping subtitles', async () => {
@@ -250,7 +250,7 @@ test('Filtering batches stay bounded and keep result order across requests', asy
     const result = await new JevDecisionEngine({ enabled: true, apiKey: 'test' }).evaluateBatch(Array(37).fill('speech'));
     assert.equal(requests, 3);
     assert.equal(result.length, 37);
-    assert.ok(result.every(item => item.is_valid && item.needs_translation && item.source === 'jev'));
+    assert.ok(result.every(item => item.is_valid && item.needs_translation && item.source === 'laya'));
   } finally { globalThis.fetch = original; }
 });
 
@@ -270,7 +270,7 @@ test('Production refinement applies remote boundaries without mutating input and
     SK.safeSendMessage = async () => { throw Error('background unavailable'); };
     assert.equal(await SK._refineAsrBoundaries(raw, { jevEnabled: true, jevApiKey: 'test' }), raw);
     SK.safeSendMessage = async () => { throw Error('must not request'); };
-    assert.equal(await SK._refineAsrBoundaries(raw, { jevEnabled: true }), raw);
+    assert.equal(await SK._refineAsrBoundaries(raw, { jevEnabled: false }), raw);
   } finally { SK.safeSendMessage = original; }
 });
 
@@ -301,4 +301,33 @@ test('Real silence remains a boundary even with explicit speech durations', () =
   const raw = [{text:'we are talking',normText:'a',startMs:0,endMs:2000},
     {text:'more words here',normText:'b',startMs:7000,endMs:9000}];
   assert.equal(SK._heuristicMergeAsr(raw, 'en').length, 2);
+});
+
+
+test('Local Laya works without API keys and uses the Watchdog endpoint', async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(url, 'http://127.0.0.1:8080/v1/systemone');
+      assert.equal(init.headers.Authorization, undefined);
+      assert.equal(JSON.parse(init.body).model, 'laya-multilingual');
+      return { ok: true, json: async () => ({ answers: { boundary_0: { type: 'noul', noul: 0.95 } } }) };
+    };
+    const engine = new JevDecisionEngine({ enabled: true });
+    assert.ok(engine.timeoutMs >= 60_000, 'Cold starts require time to load the model');
+    const result = await engine.evaluateBoundaries(segs(['a', 'b']));
+    assert.deepEqual(result.breakBefore, [null, true]);
+    assert.equal(result.source, 'laya');
+    assert.equal(engine._decision({type:'noul',noul:0.7}), null);
+    assert.equal(engine._decision({type:'noul',noul:0.99,action:{act_probability:0.1}}), null);
+  } finally { globalThis.fetch = original; }
+});
+
+test('Production ASR refinement requests local decisions without a key', async () => {
+  const original = SK.safeSendMessage;
+  try {
+    SK.safeSendMessage = async () => ({ok:true,breakBefore:[null,true]});
+    const result = await SK._refineAsrBoundaries(segs(['first', 'second']), {jevEnabled:true});
+    assert.equal(result[1].jevBreakBefore,true);
+  } finally { SK.safeSendMessage = original; }
 });

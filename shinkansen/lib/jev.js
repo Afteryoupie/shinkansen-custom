@@ -1,11 +1,13 @@
-/** TypeSafe Jev subtitle decisions. Uncertain or failed decisions retain local speech. */
-export class JevDecisionEngine {
+/** Local Laya typed decisions. Uncertain or failed decisions retain local speech. */
+export const LAYA_API_URL = 'http://127.0.0.1:8080/v1/systemone';
+export class LayaDecisionEngine {
   constructor(options = {}) {
     this.enabled = options.enabled ?? false;
-    this.apiUrl = options.apiUrl || 'https://api.typesafe.ai/v1/systemone';
+    this.apiUrl = options.apiUrl || LAYA_API_URL;
     this.apiKey = options.apiKey || '';
-    this.timeoutMs = options.timeoutMs ?? 600;
-    this.confidenceThreshold = options.confidenceThreshold ?? 0.6;
+    // Includes cold-start time after Watchdog unloads an idle model.
+    this.timeoutMs = options.timeoutMs ?? 90_000;
+    this.confidenceThreshold = options.confidenceThreshold ?? 0.8;
     this.lastError = null;
   }
 
@@ -15,6 +17,7 @@ export class JevDecisionEngine {
   ];
 
   _decision(answer) {
+    if (answer?.action?.act_probability < 0.5) return null;
     const p = answer?.noul;
     if (answer?.type !== 'noul' || typeof p !== 'number' || !Number.isFinite(p) || p < 0 || p > 1) return null;
     if (p >= this.confidenceThreshold) return true;
@@ -35,8 +38,8 @@ export class JevDecisionEngine {
       const request = (async () => {
         const response = await fetch(this.apiUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-          body: JSON.stringify({ model: 'jev-latest', state, questions }),
+          headers: { 'Content-Type': 'application/json', ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}) },
+          body: JSON.stringify({ model: 'laya-multilingual', state, questions }),
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -58,7 +61,7 @@ export class JevDecisionEngine {
     this.lastError = null;
     if (!Array.isArray(texts)) return [];
     const verdicts = texts.map(text => this.fallbackEvaluate(text, targetLang));
-    if (!this.enabled || !this.apiKey) return verdicts;
+    if (!this.enabled) return verdicts;
     // Two questions per text, at most 32 questions per request.
     for (let offset = 0; offset < texts.length; offset += 16) {
       const batch = texts.slice(offset, offset + 16);
@@ -78,7 +81,7 @@ export class JevDecisionEngine {
           ...fallback,
           is_valid: fallback.is_valid && valid,
           needs_translation: fallback.is_valid && valid && (needs ?? true),
-          source: 'jev',
+          source: 'laya',
         };
       });
     }
@@ -90,7 +93,7 @@ export class JevDecisionEngine {
     if (!Array.isArray(segments)) segments = [];
     const breakBefore = Array(segments.length).fill(null);
     let source = 'fallback';
-    if (!this.enabled || !this.apiKey) return { breakBefore, source };
+    if (!this.enabled) return { breakBefore, source };
     // Limit one evaluation to 128 boundaries. The remaining segments retain local rules.
     const count = Math.min(segments.length - 1, 128);
     for (let offset = 0; offset < count; offset += 32) {
@@ -106,7 +109,7 @@ export class JevDecisionEngine {
         const decision = this._decision(answers[`boundary_${i}`]);
         if (decision !== null) {
           breakBefore[offset + i + 1] = decision;
-          source = 'jev';
+          source = 'laya';
         }
       });
     }
@@ -115,7 +118,7 @@ export class JevDecisionEngine {
 
   fallbackEvaluate(text, targetLang = 'zh-TW') {
     const t = (text || '').trim();
-    const is_valid = t.length > 0 && !JevDecisionEngine.HALLUCINATION_PATTERNS.some(pattern => pattern.test(t));
+    const is_valid = t.length > 0 && !LayaDecisionEngine.HALLUCINATION_PATTERNS.some(pattern => pattern.test(t));
     const detected_lang = /[\u3040-\u30ff]/.test(t) ? 'ja'
       : /[\uac00-\ud7af]/.test(t) ? 'ko'
       : /[\u4e00-\u9fff]/.test(t) ? 'auto' : 'en';
@@ -123,3 +126,6 @@ export class JevDecisionEngine {
     return { is_valid, needs_translation: is_valid, detected_lang, confidence: 0.85, source: 'fallback' };
   }
 }
+
+// Preserve existing imports/settings while switching the provider to local Laya.
+export { LayaDecisionEngine as JevDecisionEngine };

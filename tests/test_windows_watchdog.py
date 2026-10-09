@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import sys
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +47,10 @@ class CountdownTests(unittest.TestCase):
 
 class MenuTests(unittest.TestCase):
     def setUp(self):
+        # Model the Windows dialog API when running these menu tests on macOS.
+        self.win_api_patch = patch('ctypes.windll', Mock(), create=True) if sys.platform != 'win32' else None
+        if self.win_api_patch:
+            self.win_api_patch.start()
         self.icon_patch = patch.object(tray, 'RightClickIcon')
         self.icon_patch.start()
         self.app = tray.LLMTray()
@@ -56,6 +61,8 @@ class MenuTests(unittest.TestCase):
     def tearDown(self):
         self.app._close()
         self.icon_patch.stop()
+        if self.win_api_patch:
+            self.win_api_patch.stop()
 
     def item(self, text):
         return next(item for item in self.app._items() if item.text == text)
@@ -70,6 +77,20 @@ class MenuTests(unittest.TestCase):
             models[1](self.app._tray)
             action.assert_called_with('switch?model=other', '切換模型')
         self.assertFalse(hasattr(self.app, 'root'))
+
+    def test_decision_menu_uses_independent_lifecycle(self):
+        self.app.data['decision'] = dict(status='sleeping', models=[dict(id='laya-multilingual')],
+                                        runtime_available=True, auto_sleep_enabled=True)
+        menu = self.item('決策模型 · Laya multilingual').submenu
+        wake = next(item for item in menu.items if item.text == '啟動決策模型')
+        self.assertTrue(wake.enabled)
+        with patch.object(self.app, 'action') as action:
+            wake(self.app._tray)
+            action.assert_called_with('decision/wake', '決策模型操作')
+        self.app.data['decision'].update(status='running', active_requests=1)
+        menu = self.item('決策模型 · Laya multilingual').submenu
+        sleep = next(item for item in menu.items if item.text == '決策模型休眠')
+        self.assertFalse(sleep.enabled)
 
     def test_compact_model_keeps_original_selection_id(self):
         name = 'Qwen3VL-8B-Uncensored-HauhauCS-Aggressive-Q4_K_M'
@@ -101,6 +122,7 @@ class MenuTests(unittest.TestCase):
         self.assertTrue(self.item('重新整理狀態').enabled)
         self.assertFalse(self.item('啟動模型').enabled)
 
+    @unittest.skipUnless(sys.platform == 'win32', 'Requires the actual Windows clipboard and PowerShell')
     def test_clipboard_contains_api_url(self):
         self.app._copy()
         import subprocess

@@ -115,6 +115,18 @@ class LLMTray:
                 enabled=enabled and not (selected and running)))
         if not data.get('models'):
             model_items.append(pystray.MenuItem('尚無可用模型', None, enabled=False))
+        decision = data.get('decision') or {}
+        decision_running = decision.get('status') == 'running'
+        decision_enabled = bool(data) and not busy and decision.get('status') != 'starting' and bool(decision.get('models'))
+        decision_label = '載入中…' if decision.get('status') == 'starting' else '處理中' if decision.get('active_requests', 0) > 0 else '準備就緒' if decision_running else '休眠待命'
+        decision_items = [
+            pystray.MenuItem('Laya multilingual · ' + decision_label, None, enabled=False),
+            pystray.MenuItem('決策模型休眠' if decision_running else '啟動決策模型',
+                            self._handler('decision/sleep' if decision_running else 'decision/wake', '決策模型操作'),
+                            enabled=decision_enabled and decision.get('active_requests', 0) == 0 and decision.get('runtime_available', False)),
+            pystray.MenuItem('閒置 3 分鐘後自動休眠', self._handler('decision/toggle_auto_sleep', '更新決策模型休眠策略'),
+                            checked=lambda _: decision.get('auto_sleep_enabled', True), enabled=decision_enabled),
+        ]
         items = [
             pystray.MenuItem(MENU_CAPTION, None, enabled=False),
             pystray.MenuItem(state, None, enabled=False),
@@ -127,6 +139,8 @@ class LLMTray:
             pystray.MenuItem('閒置時自動休眠', self._handler('toggle_auto_sleep', '更新休眠策略'),
                             checked=lambda _: data.get('auto_sleep_enabled', False),
                             enabled=bool(data) and not busy and data.get('idle_timeout', 0) > 0),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('決策模型 · Laya multilingual', pystray.Menu(*decision_items), enabled=bool(data) and bool(decision.get('models'))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem('開啟網頁控制台', lambda *_: webbrowser.open(API_BASE + '/status')),
             pystray.MenuItem('複製 API 網址', self._copy),
