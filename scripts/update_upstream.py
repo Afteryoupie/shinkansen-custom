@@ -76,7 +76,6 @@ def verify_syntax():
         with open(st_path, "r", encoding="utf-8") as f:
             st = f.read()
         assert "translatePresets: [" in st, "storage.js 缺少 translatePresets 屬性"
-        assert "Qwen3VL-8B-Uncensored-HauhauCS-Aggressive-Q4_K_M" in st, "storage.js 缺少本機 Qwen3VL 模型"
         
         # 驗證 custom 模組存在
         assert os.path.exists(os.path.join(EXT_DIR, "custom", "yt-player-btn.js")), "custom/yt-player-btn.js 遺失"

@@ -180,6 +180,11 @@
               <option value="openai-compat" data-i18n="options.preset.engineCustom">自訂模型</option>
             </select>
           </label>
+          <label class="preset-model-label" id="preset-local-row-2" hidden>
+            <span data-i18n="options.cp.localLabel">本地模型</span>
+            <select id="preset-local-model-2"></select>
+            <button type="button" class="ghost-btn preset-local-clear" data-slot="2" data-i18n="options.cp.localClear">清空預選模型</button>
+          </label>
           <label class="preset-model-label" id="preset-model-row-2">
             <span data-i18n="options.preset.modelGemini">Gemini 模型</span>
             <select id="preset-model-2">
@@ -211,6 +216,11 @@
               <option value="openai-compat" data-i18n="options.preset.engineCustom">自訂模型</option>
             </select>
           </label>
+          <label class="preset-model-label" id="preset-local-row-1" hidden>
+            <span data-i18n="options.cp.localLabel">本地模型</span>
+            <select id="preset-local-model-1"></select>
+            <button type="button" class="ghost-btn preset-local-clear" data-slot="1" data-i18n="options.cp.localClear">清空預選模型</button>
+          </label>
           <label class="preset-model-label" id="preset-model-row-1">
             <span data-i18n="options.preset.modelGemini">Gemini 模型</span>
             <select id="preset-model-1">
@@ -241,6 +251,11 @@
               <option value="google" data-i18n="options.preset.engineGoogle">Google Translate（免費機器翻譯）</option>
               <option value="openai-compat" data-i18n="options.preset.engineCustom">自訂模型</option>
             </select>
+          </label>
+          <label class="preset-model-label" id="preset-local-row-3" hidden>
+            <span data-i18n="options.cp.localLabel">本地模型</span>
+            <select id="preset-local-model-3"></select>
+            <button type="button" class="ghost-btn preset-local-clear" data-slot="3" data-i18n="options.cp.localClear">清空預選模型</button>
           </label>
           <label class="preset-model-label" id="preset-model-row-3">
             <span data-i18n="options.preset.modelGemini">Gemini 模型</span>
@@ -807,7 +822,11 @@
       <label>
         <span data-i18n="options.cp.modelLabel">模型 ID</span>
         <input type="text" id="cp-model" data-i18n-attr-placeholder="options.cp.modelPlaceholder" placeholder="例如：anthropic/claude-sonnet-4-5（llama.cpp / Ollama 可留空）">
-        <small class="muted" data-i18n-html="options.cp.modelHint.html">
+        <select id="cp-local-model" hidden aria-describedby="cp-local-model-status" aria-label="本地模型" data-i18n-attr-aria-label="options.cp.localLabel"></select>
+        <button type="button" id="cp-refresh-models" class="ghost-btn" hidden data-i18n="options.cp.localRefresh">重新整理模型清單</button>
+        <button type="button" id="cp-clear-model" class="ghost-btn" hidden data-i18n="options.cp.localClear">清空預選模型</button>
+        <small id="cp-local-model-status" class="muted" role="status" hidden></small>
+        <small id="cp-model-hint" class="muted" data-i18n-html="options.cp.modelHint.html">
           OpenRouter 的 model ID 格式為 <code>provider/model</code>（如
           <code>anthropic/claude-sonnet-4-5</code>、<code>google/gemini-3-flash</code>、
           <code>meta-llama/llama-3.1-70b</code>）；其他端點直接填 model 名稱。

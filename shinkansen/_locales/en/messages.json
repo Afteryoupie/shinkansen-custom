@@ -1,4 +1,6 @@
 {
+  "contextTranslatePage": { "message": "Translate page" },
+  "contextShowOriginal": { "message": "Show original" },
   "extName": {
     "message": "Shinkansen Custom",
     "description": "Extension name"

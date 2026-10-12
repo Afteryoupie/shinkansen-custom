@@ -23,6 +23,7 @@ export function sanitizeImport(raw, _t, SC = globalThis.__SKShortcuts) {
   // 頂層純量欄位：型別 + 範圍
   const topRules = {
     autoTranslate:       { type: 'boolean' },
+    localModelSelectionsSaved: { type: 'boolean' },
     // 2026-09-11 code review §3.7-4：autoConvertZh 原漏列（第四輪同型漏列），匯入被默默丟掉。
     // 之後 DEFAULT_SETTINGS 每個 key 都由 test/unit/options-import-sanitize-coverage.spec.js
     // forcing function 鎖住：新加設定 key 沒補這裡的規則 → spec fail。

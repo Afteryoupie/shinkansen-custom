@@ -16,6 +16,7 @@
     "128": "icons/icon-128.png"
   },
   "permissions": [
+    "contextMenus",
     "storage",
     "alarms",
     "webNavigation",

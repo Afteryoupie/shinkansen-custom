@@ -14,6 +14,7 @@ class State:
         self.llm_proc = None
         self.last_active_time: float = time.time()
         self.active_requests: int = 0
+        self.request_count: int = 0
         self.is_starting: bool = False
         self.current_model: Optional[Dict[str, Any]] = None
         self.models: List[Dict[str, Any]] = []

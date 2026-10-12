@@ -2,6 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { DEFAULT_SETTINGS, migrateCustomProviderModelIfNeeded } from '../shinkansen/lib/storage.js';
+
+test('Local defaults stay empty and legacy built-in models are cleared without changing chosen models', async () => {
+  assert.equal(DEFAULT_SETTINGS.customProvider.model, '');
+  assert.equal(DEFAULT_SETTINGS.translatePresets.find(p => p.engine === 'openai-compat').model, '');
+  const patches = [];
+  globalThis.chrome = { storage: { sync: { set: async patch => patches.push(patch) } } };
+  try {
+    await migrateCustomProviderModelIfNeeded({customProvider: {model: ''}});
+    await migrateCustomProviderModelIfNeeded({customProvider: {model: 'Riva-Translate'}});
+    assert.equal(patches.length, 0);
+    await migrateCustomProviderModelIfNeeded({customProvider: {model: 'Qwen3VL-8B'},
+      translatePresets: [{slot: 1, engine: 'openai-compat', model: 'Qwen3VL-8B-Uncensored-HauhauCS-Aggressive-Q4_K_M'}]});
+    assert.equal(patches[0].customProvider.model, '');
+    assert.equal(patches[0].translatePresets[0].model, '');
+  } finally { delete globalThis.chrome; }
+});
 const read = name => fs.readFileSync(new URL('../shinkansen/' + name, import.meta.url), 'utf8');
 function boot(cached, saved, dark = true, fail = false) {
   const attrs = new Map();

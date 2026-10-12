@@ -2,6 +2,9 @@
 // 職責：接收翻譯請求、呼叫 Gemini API、處理快取、處理快捷鍵、統一除錯 Log。
 
 import { browser } from './lib/compat.js';
+import { registerPageContextMenus, refreshPageContextMenu } from './lib/page-context-menu.js';
+
+registerPageContextMenus();
 import { LayaDecisionEngine } from './lib/jev.js';
 import { runSubtitleDecisionPipeline, runAsrDecisionPipeline, subtitleRepairPrompt } from './lib/subtitle-decisions.js';
 import { isLocalSubtitleProvider, queueLocalSubtitle, localSubtitlePrompt } from './lib/local-subtitle.js';
@@ -489,6 +492,7 @@ async function setTranslatedBadge(tabId) {
       await browser.action.setBadgeTextColor({ color: '#ffffff', tabId });
     }
     await browser.action.setBadgeText({ text: BADGE_TEXT, tabId });
+    await refreshPageContextMenu();
   } catch (err) {
     debugLog('warn', 'system', 'setBadge failed', { error: err.message });
   }
@@ -498,6 +502,7 @@ async function clearTranslatedBadge(tabId) {
   if (tabId == null) return;
   try {
     await browser.action.setBadgeText({ text: '', tabId });
+    await refreshPageContextMenu();
   } catch (err) {
     debugLog('warn', 'system', 'clearBadge failed', { error: err.message });
   }
@@ -989,7 +994,8 @@ const messageHandlers = {
   // cache key 加 baseUrl hash + model 分區。
   TRANSLATE_BATCH_CUSTOM: {
     async: true,
-    handler: (payload, sender) => handleTranslateCustom(payload, sender, '_oc'),
+    handler: (payload, sender) => handleTranslateCustom(payload, sender, '_oc',
+      payload?.modelOverride ? { model: payload.modelOverride } : null),
   },
   // v1.5.8: 字幕用自訂模型，與網頁翻譯共用 customProvider 設定但 cache key 用 '_oc_yt'
   // 命名空間（同 '_yt' 對 Gemini、'_gt_yt' 對 Google MT 的字幕分區慣例）。
@@ -1298,7 +1304,7 @@ const messageHandlers = {
         // v1.8.41:llama.cpp / Ollama 等本機 server 啟動時鎖 model，使用者可不填 model 欄位。
         // 此時 server 用 startup-loaded model,Shinkansen 用 '<server-default>' 佔位
         // （避免空字串污染 model filter / chart group)。
-        resolvedModel = settings.customProvider?.model || '<server-default>';
+        resolvedModel = payload.model || settings.customProvider?.model || '<server-default>';
       } else {
         resolvedModel = payload.model || settings.geminiConfig?.model || 'unknown';
       }
@@ -2276,7 +2282,7 @@ async function handleExtractGlossaryCustomProvider(payload, sender) {
     inputHash: payload.inputHash, chars: payload.compressedText?.length,
   });
   const settings = await getSettingsCached();
-  const cp = settings.customProvider || {};
+  const cp = { ...(settings.customProvider || {}), ...(payload.modelOverride ? { model: payload.modelOverride } : {}) };
   if (!cp.baseUrl) {
     return { glossary: [], usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 }, _diag: '尚未設定自訂 Provider 的 Base URL。' };
   }
@@ -2306,7 +2312,7 @@ async function handleExtractGlossaryCustomProvider(payload, sender) {
   };
 
   // 2. 呼叫自訂 Provider 抽術語表（extractGlossary 內部 best-effort，失敗回空陣列 + _diag)
-  const result = await extractGlossaryCustom(compressedText, glossaryEffSettings);
+  const result = await extractGlossaryCustom(compressedText, { ...glossaryEffSettings, customProvider: cp });
   const { glossary, usage, _diag } = result;
   debugLog('info', 'glossary', 'openai-compat returned glossary', { terms: glossary.length, usage, diag: _diag || null });
 

@@ -1,4 +1,6 @@
 {
+  "contextTranslatePage": { "message": "翻譯本頁" },
+  "contextShowOriginal": { "message": "顯示原文" },
   "extName": {
     "message": "Shinkansen Custom",
     "description": "擴充功能名稱"

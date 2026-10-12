@@ -817,7 +817,7 @@ export const DEFAULT_SETTINGS = {
   // label 顯示於 options 頁（未來 toast 也可用）。
   // 行為：閒置按 → 啟動對應 preset；翻譯中按 → abort；已翻譯按任意 → restorePage。
   translatePresets: [
-    { slot: 1, engine: 'openai-compat', model: 'Qwen3VL-8B-Uncensored-HauhauCS-Aggressive-Q4_K_M', label: '本地 Llama (Qwen3VL)' },
+    { slot: 1, engine: 'openai-compat', model: '', label: '本地 Llama' },
     { slot: 2, engine: 'gemini', model: 'gemini-3.1-flash-lite', label: 'Flash Lite' },
     { slot: 3, engine: 'google', model: null, label: 'Google MT' },
   ],
@@ -905,7 +905,7 @@ export const DEFAULT_SETTINGS = {
   // 計費可能不符 — 在 options 頁面手動覆蓋價格即可修正。
   customProvider: {
     baseUrl: 'http://127.0.0.1:8080/v1',
-    model: 'Qwen3VL-8B-Uncensored-HauhauCS-Aggressive-Q4_K_M',
+    model: '',
     systemPrompt: DEFAULT_SUBTITLE_SYSTEM_PROMPT, // 預設使用專業繁體字幕翻譯 Prompt
     temperature: 0.0,
     inputPerMTok: 0,
@@ -1094,21 +1094,21 @@ export const GEMINI_37_FLASH_OLD_ID = 'gemini-3.7-flash';
 export const GEMINI_37_FLASH_NEW_ID = 'gemini-3.8-flash';
 
 export async function migrateCustomProviderModelIfNeeded(syncSaved) {
-  if (!syncSaved) return;
-  const TARGET_MODEL = 'Qwen3VL-8B-Uncensored-HauhauCS-Aggressive-Q4_K_M';
+  if (!syncSaved || syncSaved.localModelSelectionsSaved) return;
+  const legacyModels = ['Qwen3VL-8B', 'Qwen3VL-8B-Uncensored-HauhauCS-Aggressive-Q4_K_M'];
   const patch = {};
-  if (syncSaved.customProvider && (!syncSaved.customProvider.model || syncSaved.customProvider.model === 'Qwen3VL-8B')) {
-    patch.customProvider = { ...syncSaved.customProvider, model: TARGET_MODEL };
+  if (syncSaved.customProvider && legacyModels.includes(syncSaved.customProvider.model)) {
+    patch.customProvider = { ...syncSaved.customProvider, model: '' };
   }
-  if (syncSaved.ytSubtitle && (!syncSaved.ytSubtitle.model || syncSaved.ytSubtitle.model === 'Qwen3VL-8B')) {
-    patch.ytSubtitle = { ...syncSaved.ytSubtitle, model: TARGET_MODEL };
+  if (syncSaved.ytSubtitle?.engine === 'openai-compat' && legacyModels.includes(syncSaved.ytSubtitle.model)) {
+    patch.ytSubtitle = { ...syncSaved.ytSubtitle, model: '' };
   }
   if (Array.isArray(syncSaved.translatePresets)) {
     let touched = false;
     const updated = syncSaved.translatePresets.map((p) => {
-      if (p && p.engine === 'openai-compat' && (!p.model || p.model === 'Qwen3VL-8B')) {
+      if (p && p.engine === 'openai-compat' && legacyModels.includes(p.model)) {
         touched = true;
-        return { ...p, model: TARGET_MODEL };
+        return { ...p, model: '', label: p.label === '本地 Llama (Qwen3VL)' ? '本地 Llama' : p.label };
       }
       return p;
     });

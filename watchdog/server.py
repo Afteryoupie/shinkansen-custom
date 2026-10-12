@@ -199,6 +199,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 "idle_remaining": rem,
                 "auto_sleep_enabled": state.auto_sleep_enabled,
                 "active_requests": state.active_requests,
+                "request_count": state.request_count,
                 "models": state.models,
                 "decision": decision.status(),
             }
@@ -387,6 +388,7 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 "auto_sleep_enabled": state.auto_sleep_enabled,
                 "models": state.models,
                 "active_requests": state.active_requests,
+                "request_count": state.request_count,
                 "decision": decision.status(),
             }
 
@@ -475,10 +477,18 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 await send_model_error(client_writer, "503 Service Unavailable", "LLM failed to start")
                 return
 
+            if method == "POST":
+                state.request_count += 1
             if sep:
                 if b"application/json" in header_bytes.lower() and state.current_model:
                     try:
                         data_obj = json.loads(body_bytes.decode("utf-8"))
+                        target_language = data_obj.pop("shinkansen_target_language", None)
+                        if "riva-translate" in state.current_model["id"].lower() and isinstance(target_language, str) and target_language:
+                            # Riva's template discards ordinary system instructions.
+                            for message in data_obj.get("messages", []):
+                                if message.get("role") == "user" and isinstance(message.get("content"), str):
+                                    message["content"] = f"Translate this into {target_language}: " + message["content"]
                         if state.current_model["type"] == "apple-api":
                             data_obj["model"] = "permissive"
                             messages = data_obj.get("messages", [])

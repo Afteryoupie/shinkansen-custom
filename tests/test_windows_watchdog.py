@@ -23,13 +23,33 @@ class IconTests(unittest.TestCase):
         with patch.object(tray, 'RightClickIcon'), patch.object(tray, 'make_icon', side_effect=lambda s: s):
             app = tray.LLMTray()
             app.backend_pid = 123
-            for count, expected in [(0, 'ready'), (1, 'running'), (0, 'ready')]:
-                with patch.object(tray, 'request', return_value=dict(status='running', active_requests=count)):
+            for now, count, expected in [(0, 0, 'ready'), (1, 1, 'running'), (3, 0, 'ready')]:
+                with patch.object(tray, 'time') as clock, patch.object(tray, 'request', return_value=dict(status='running', active_requests=count)):
+                    clock.monotonic.return_value = now
                     app._refresh()
                 self.assertEqual(app._tray.icon, expected)
             with patch.object(tray, 'request', side_effect=OSError('offline')):
                 app._refresh()
             self.assertEqual(app._tray.icon, 'offline')
+
+    def test_completed_short_request_opens_mouth_then_closes(self):
+        with patch.object(tray, 'RightClickIcon'), patch.object(tray, 'make_icon', side_effect=lambda s: s):
+            app = tray.LLMTray()
+            app.backend_pid = 123
+            for now, count, expected in [(10, 0, 'ready'), (10.25, 1, 'running'), (10.75, 1, 'running'), (11.5, 1, 'ready')]:
+                with patch.object(tray, 'time') as clock, patch.object(tray, 'request', return_value=dict(status='running', active_requests=0, request_count=count)):
+                    clock.monotonic.return_value = now
+                    app._refresh()
+                self.assertEqual(app._tray.icon, expected)
+
+    def test_existing_requests_and_backend_restart_do_not_fake_activity(self):
+        with patch.object(tray, 'RightClickIcon'), patch.object(tray, 'make_icon', side_effect=lambda s: s):
+            app = tray.LLMTray()
+            app.backend_pid = 123
+            for count in [20, 0]:
+                with patch.object(tray, 'request', return_value=dict(status='running', active_requests=0, request_count=count)):
+                    app._refresh()
+                self.assertEqual(app._tray.icon, 'ready')
 
 
 class CountdownTests(unittest.TestCase):
@@ -135,29 +155,27 @@ class MenuTests(unittest.TestCase):
 
     def test_busy_menu_keeps_exit_available(self):
         self.app.busy = True
-        self.assertTrue(self.item('退出 LLM watchdog…').enabled)
+        self.assertTrue(self.item('退出 LLM watchdog').enabled)
         self.app.quitting = True
-        self.assertFalse(self.item('退出 LLM watchdog…').enabled)
+        self.assertFalse(self.item('退出 LLM watchdog').enabled)
 
-    def test_confirmed_exit_bypasses_busy_and_foregrounds_dialog(self):
+    def test_exit_bypasses_busy_without_blocking_menu_dialog(self):
         self.app.busy = True
         with patch('ctypes.windll.user32.MessageBoxW', return_value=6) as dialog, patch.object(self.app, 'action') as action:
             self.app._quit()
         action.assert_called_once_with('stop', '結束 LLM watchdog')
-        flags = dialog.call_args.args[-1]
-        self.assertTrue(flags & 0x10000)
-        self.assertTrue(flags & 0x40000)
+        dialog.assert_not_called()
 
-    def test_cancel_does_not_stop_service(self):
-        with patch('ctypes.windll.user32.MessageBoxW', return_value=7), patch.object(self.app, 'action') as action:
+    def test_duplicate_exit_does_not_send_another_stop(self):
+        self.app.quitting = True
+        with patch.object(self.app, 'action') as action:
             self.app._quit()
         action.assert_not_called()
         self.assertFalse(self.app.closed.is_set())
 
     def test_offline_tray_without_backend_can_close(self):
         self.app.data = None
-        with patch('ctypes.windll.user32.MessageBoxW', return_value=6):
-            self.app._quit()
+        self.app._quit()
         self.assertTrue(self.app.closed.is_set())
 
     def test_stop_action_runs_during_another_operation(self):
@@ -189,7 +207,7 @@ class MenuTests(unittest.TestCase):
             self.app.action('stop', '結束 LLM watchdog')
         self.assertFalse(self.app.closed.is_set())
         self.assertFalse(self.app.quitting)
-        self.assertTrue(self.item('退出 LLM watchdog…').enabled)
+        self.assertTrue(self.item('退出 LLM watchdog').enabled)
 
 if __name__ == '__main__':
     unittest.main()

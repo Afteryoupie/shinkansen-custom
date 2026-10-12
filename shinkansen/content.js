@@ -1662,7 +1662,7 @@
           const glossaryResult = await Promise.race([
             SK.safeSendMessage({
               type: _glossaryMsgType,
-              payload: { compressedText, inputHash },
+              payload: { compressedText, inputHash, modelOverride: options.engine === 'openai-compat' ? options.modelOverride || null : null },
             }),
             new Promise((_, reject) =>
               setTimeout(() => reject(new Error('術語表逾時')), glossaryTimeout)
@@ -1686,7 +1686,7 @@
         SK.showToast('loading', SK.t('toast.glossaryBuilding'), { progress: 0, startTimer: true });
         const glossaryPromise = SK.safeSendMessage({
           type: _glossaryMsgType,
-          payload: { compressedText, inputHash },
+          payload: { compressedText, inputHash, modelOverride: options.engine === 'openai-compat' ? options.modelOverride || null : null },
         }).then(res => {
           if (res?.ok && res.glossary?.length > 0) {
             SK.sendLog('info', 'glossary', 'glossary arrived (async)', { terms: res.glossary.length });
@@ -2872,6 +2872,8 @@
   // v1.4.12: 依 preset slot 觸發對應 engine + model 翻譯。
   // 行為：閒置 → 啟動對應 preset；翻譯中 → abort；已翻譯 → restorePage（任一 slot）。
   async function handleTranslatePreset(slot, opts = {}) {
+    // Explicit translate actions should not toggle an in-flight translation off.
+    if (opts.translateOnly && STATE.translating && !STATE.translatingConvertOnly) return;
     // opts.force（懸浮按鈕長按選單選引擎時帶）：直接用指定 preset 重新翻譯，而非 toggle 還原。
     // 一般入口（短按 / 快速鍵 / popup）維持 toggle 語意：已譯 → 還原。
     const force = opts.force === true;
@@ -2945,9 +2947,7 @@
     if (preset.engine === 'google') {
       SK.translatePageGoogle({ slot, label: preset.label || null, overConverted });
     } else if (preset.engine === 'openai-compat') {
-      // v1.5.7: 自訂 OpenAI-compatible Provider。model / baseUrl / API Key 全部從
-      // settings.customProvider 拿（preset.model 略過），preset 只決定 engine + label。
-      SK.translatePage({ engine: 'openai-compat', slot, label: preset.label || null, overConverted });
+      SK.translatePage({ engine: 'openai-compat', modelOverride: preset.model || null, slot, label: preset.label || null, overConverted });
     } else {
       SK.translatePage({ modelOverride: preset.model || null, slot, label: preset.label || null, overConverted });
     }
@@ -2957,10 +2957,13 @@
 
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === 'TRANSLATE_PRESET') {
-      handleTranslatePreset(Number(msg.payload?.slot), { force: msg.payload?.force === true });
+      handleTranslatePreset(Number(msg.payload?.slot), {
+        force: msg.payload?.force === true, translateOnly: msg.payload?.translateOnly === true,
+      });
       return;
     }
-        if (msg?.type === 'RESTORE_PAGE') {
+    if (msg?.type === 'RESTORE_PAGE') {
+      if (STATE.translating) abortInProgressTranslation({ silent: true });
       restorePage();
       sendResponse({ ok: true });
       return true;

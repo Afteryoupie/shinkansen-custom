@@ -33,9 +33,9 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
         else:
             writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}')
         await writer.drain();writer.close();await writer.wait_closed()
-    async def request(self,model='default',fragment=False,halfclose=False):
+    async def request(self,model='default',fragment=False,halfclose=False,extra=None):
         reader,writer=await asyncio.open_connection('127.0.0.1',self.proxy.sockets[0].getsockname()[1])
-        body=json.dumps({'model':model,'messages':[]}).encode();head=f'POST /v1/chat/completions HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n'.encode()
+        body=json.dumps({'model':model,'messages':[],**(extra or {})}).encode();head=f'POST /v1/chat/completions HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n'.encode()
         if fragment:
             writer.write(head[:12]);await writer.drain();await asyncio.sleep(.01);writer.write(head[12:]+body[:3]);await writer.drain();await asyncio.sleep(.01);writer.write(body[3:])
         else:writer.write(head+body)
@@ -69,3 +69,14 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(server,'start_llm',AsyncMock(return_value=False)):
             self.assertIn(b'503 Service Unavailable',await self.request())
         self.assertIn(b'200 OK',await self.request());self.assertEqual(state.active_requests,0)
+    async def test_riva_default_uses_translation_target_without_leaking_metadata(self):
+        state.current_model = dict(id='Riva-Translate-test',name='Riva',path='/models/riva',type='gguf')
+        messages = [{'role':'system','content':'Translate to Taiwan Chinese'}, {'role':'user','content':'Hello'}]
+        await self.request(extra={'messages':messages,'shinkansen_target_language':'Traditional Chinese'})
+        self.assertEqual(self.captured[0]['messages'][1]['content'],'Translate this into Traditional Chinese: Hello')
+        self.assertNotIn('shinkansen_target_language',self.captured[0])
+    async def test_other_models_keep_original_messages(self):
+        messages = [{'role':'user','content':'Hello'}]
+        await self.request(extra={'messages':messages,'shinkansen_target_language':'Traditional Chinese'})
+        self.assertEqual(self.captured[0]['messages'],messages)
+        self.assertNotIn('shinkansen_target_language',self.captured[0])

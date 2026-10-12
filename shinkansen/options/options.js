@@ -6,6 +6,7 @@ initTheme();
 
 import { browser } from '../lib/compat.js';
 import { isLocalSubtitleProvider } from '../lib/local-subtitle.js';
+import { bindLocalModelPicker, fillModelSelect } from './local-model-picker.js';
 import { DEFAULT_SETTINGS, DEFAULT_SYSTEM_PROMPT, DEFAULT_GLOSSARY_PROMPT, DEFAULT_SUBTITLE_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, isLegacyDefaultForbiddenTerms, TARGET_LANGUAGES, UI_LANGUAGES, getEffectiveSystemPrompt, getEffectiveSubtitleSystemPrompt, getEffectiveGlossaryPrompt, isPromptUnchangedFromDefault, isPromptUnchangedFromAnyTargetDefault, LOCAL_SETTINGS_KEYS, migrateLargeKeysToLocalIfNeeded, overlayLocalSettings, splitSettingsPatch } from '../lib/storage.js';
 import { formatTokens, formatUSD, formatMoney, parseUserNum, buildUsageCsvFilename, formatYmdHms } from '../lib/format.js';
 import { sanitizeImport as sanitizeImportImpl } from './import-sanitize.js';
@@ -316,6 +317,7 @@ async function load() {
     const p = presets.find(x => x.slot === slot) || DEFAULTS.translatePresets.find(x => x.slot === slot);
     $(`preset-label-${slot}`).value = p.label || '';
     $(`preset-engine-${slot}`).value = VALID_ENGINES.includes(p.engine) ? p.engine : 'gemini';
+    fillModelSelect($(`preset-local-model-${slot}`), p.engine === 'openai-compat' ? (p.model || '') : '', [], _t('options.cp.localInherit'));
     const modelSel = $(`preset-model-${slot}`);
     if (p.model && [...modelSel.options].some(o => o.value === p.model)) {
       modelSel.value = p.model;
@@ -436,6 +438,7 @@ async function load() {
     });
     }
   }
+  refreshLocalModels();
 }
 
 // P2 helper: SK.t shortcut for dynamic strings
@@ -813,6 +816,15 @@ function updatePresetModelVisibility(slot) {
   const engine = $(`preset-engine-${slot}`).value;
   const row = $(`preset-model-row-${slot}`);
   if (row) row.hidden = (engine === 'google' || engine === 'openai-compat');
+  $(`preset-local-row-${slot}`).hidden = engine !== 'openai-compat' || !$('cp-model').hidden;
+}
+
+function refreshLocalPresetModels(ids) {
+  for (const slot of [1, 2, 3]) {
+    const select = $(`preset-local-model-${slot}`);
+    fillModelSelect(select, select.value, ids, _t('options.cp.localInherit'));
+    updatePresetModelVisibility(slot);
+  }
 }
 
 // 「工具列翻譯本頁按鈕」「自動翻譯網站」兩個下拉選單的 option text
@@ -1114,8 +1126,8 @@ async function _saveImpl() {
     translatePresets: [1, 2, 3].map(slot => {
       const raw = $(`preset-engine-${slot}`).value;
       const engine = (raw === 'google' || raw === 'openai-compat') ? raw : 'gemini';
-      // model 欄只對 gemini 有意義（google 與 openai-compat 都用各自分頁的設定）
-      const model = engine === 'gemini' ? ($(`preset-model-${slot}`).value || null) : null;
+      const model = engine === 'gemini' ? ($(`preset-model-${slot}`).value || null)
+        : engine === 'openai-compat' ? ($(`preset-local-model-${slot}`).value || null) : null;
       const label = ($(`preset-label-${slot}`).value || '').trim()
         || _t('options.preset.fallbackLabel', { slot });
       return { slot, engine, model, label };
@@ -1197,6 +1209,7 @@ async function _saveImpl() {
     })(),
     // v1.5.7: 自訂 OpenAI-compatible Provider
     // v1.6.18: 加入 thinkingLevel + extraBodyJson（各家 thinking schema 統一抽象）
+    localModelSelectionsSaved: true,
     customProvider: {
       baseUrl: ($('cp-baseUrl').value || '').trim(),
       model: ($('cp-model').value || '').trim(),
@@ -3152,6 +3165,19 @@ $('log-tbody').addEventListener('click', (e) => {
 
 // ─── 初始化 ──────────────────────────────────────────────
 initUsageDateRange();
+const refreshLocalModels = bindLocalModelPicker({
+  baseUrl: $('cp-baseUrl'), input: $('cp-model'), select: $('cp-local-model'),
+  refresh: $('cp-refresh-models'), clear: $('cp-clear-model'), status: $('cp-local-model-status'),
+  hint: $('cp-model-hint'), apiKey: $('cp-apiKey'), t: _t,
+  onModels: refreshLocalPresetModels,
+});
+document.querySelectorAll('.preset-local-clear').forEach(button => {
+  button.addEventListener('click', () => {
+    const select = $(`preset-local-model-${button.dataset.slot}`);
+    select.value = '';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+});
 load();
 
 // 本地端點或模型名稱變更時同步字幕模式說明。

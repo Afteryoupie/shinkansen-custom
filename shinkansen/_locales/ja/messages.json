@@ -1,4 +1,6 @@
 {
+  "contextTranslatePage": { "message": "このページを翻訳" },
+  "contextShowOriginal": { "message": "原文を表示" },
   "extName": {
     "message": "Shinkansen Custom",
     "description": "拡張機能名"

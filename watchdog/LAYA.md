@@ -31,9 +31,22 @@ hf download convaiinnovations/laya-multilingual \
 Windows 的 Python 路徑為 `watchdog/.venv/Scripts/python.exe`。模型預設位於 Watchdog
 模型目錄下的 `Laya-Multilingual`。可用 `LAYA_MODEL_DIR` 和 `LAYA_PYTHON` 覆寫路徑。
 
+本機 Windows RX 9070 GRE 使用 Python 3.12 與 AMD ROCm 7.2.1 的獨立環境。
+重建此 GPU 環境時改用 `watchdog/requirements-laya-rocm.txt`，不要再安裝 CPU 版清單：
+
+```powershell
+& .\watchdog\.venv\Scripts\python.exe -m pip install -r watchdog/requirements-laya-rocm.txt
+& .\watchdog\.venv\Scripts\python.exe -c "import torch; print(torch.version.hip, torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+```
+
+ROCm 的 AMD GPU 透過 PyTorch `cuda` 介面操作；狀態顯示 `cuda:0` 代表 AMD GPU，
+並非 NVIDIA。翻譯模型另走 llama.cpp Vulkan，需安裝 LunarG Vulkan runtime；
+`llama-server.exe --list-devices` 必須列出 RX 9070 GRE。
+
 M3 已以 PyTorch MPS（Metal）實測。裝有 ROCm PyTorch 的 AMD 系統會使用
 `torch.cuda` 介面；需依作業系統與顯卡安裝相容的 ROCm wheel，不能使用 macOS wheel。
-Windows 系統匣控制以模擬介面測試，RX 9070 GRE 的實際 GPU 推論尚未驗證。
+Windows RX 9070 GRE 已使用 ROCm 7.2.1 實測 GPU 張量運算、Laya 載入與字幕決策。
+ROCm 7.13／7.14 在本機會回報 `device kernel image is invalid`，因此固定使用已驗證的 7.2.1。
 服務自動選擇可用裝置，沒有 GPU 時使用 CPU；`LAYA_DEVICE` 可指定 `mps`、`cuda` 或 `cpu`。
 
 ## 新幹線
@@ -79,4 +92,9 @@ watchdog/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Windows 系統匣測試另需 pystray、Pillow。
+Windows Python venv 啟動器會建立不同 PID 的子程序；後端使用每次啟動產生的識別碼
+驗證健康檢查，休眠時終止整個程序樹，避免誤報 8082 衝突或留下模型程序。
+RX 9070 GRE 主機已實測 CPU 與 ROCm GPU 冷啟動、字幕決策、格式檢查與休眠後再次喚醒；
+GPU 驗證包含 Laya 決策 → Riva Vulkan 翻譯 → Laya 格式檢查的實際 HTTP 流程。
+此驗證不代表已測試瀏覽器播放中的字幕品質。
 單元測試使用模擬決策後端；M3 的實際載入、推論、HTTP 端點與釋放記憶體另以本機服務驗證。

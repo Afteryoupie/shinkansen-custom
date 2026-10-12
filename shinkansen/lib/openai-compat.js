@@ -25,6 +25,7 @@ import { DELIMITER, MARKER_COMPACT, MARKER_STRONG, packChunks, buildEffectiveSys
 // thinkingLevel 'auto/off/low/medium/high' + extraBodyJson 進階透傳）
 import { buildThinkingPayload } from './openai-compat-thinking.js';
 import { codedError } from './bg-error.js'; // 使用者面對錯誤帶 error code 過協定，content 端查 dict 翻譯
+import { LANG_LABELS } from './storage.js';
 
 import {
   fetchWithRetry, readJsonBody, alignAndFallback, runChunkedBatch, emptyContentError, parseLlmJson, emptyUsage,
@@ -70,9 +71,47 @@ function resolveChatCompletionsUrl(baseUrl) {
  * @returns {Promise<{ translations: string[], usage: { inputTokens: number, outputTokens: number, cachedTokens: number }, hadMismatch: boolean }>}
  */
 export async function translateBatch(texts, settings, glossary, fixedGlossary, forbiddenTerms) {
+  const cp = settings.customProvider || {};
+  const numbered = /ASR/i.test(cp.systemPrompt || '') && texts?.length === 1 && /^\s*1[|｜]/.test(texts[0]);
+  if ((numbered || texts?.length > 1) && isWatchdogProvider(cp.baseUrl)) {
+    let activeModel = cp.model;
+    if (!activeModel || activeModel === 'default') {
+      const response = await fetch(new URL('/api/status', cp.baseUrl), { signal: AbortSignal.timeout(2000) });
+      if (!response.ok) throw new Error(`Watchdog status: HTTP ${response.status}`);
+      activeModel = (await response.json()).current_model_id;
+    }
+    if (/riva-translate/i.test(activeModel || '')) {
+      settings = { ...settings, maxUnitsPerBatch: 1 };
+      if (numbered) {
+        const rows = texts[0].split('\n').filter(line => line.trim()).map(line => line.match(/^\s*(\d+)[|｜](.*)$/));
+        if (rows.every((row, i) => row && Number(row[1]) === i + 1)) {
+          // Riva translates text; build ASR ranges here instead of asking it to invent them.
+          const groups = [];
+          for (const row of rows) {
+            const previous = groups[groups.length - 1];
+            if (previous && !/[.!?。！？]$/.test(previous.text.trim()) && previous.end - previous.start < 7) {
+              previous.text += ' ' + row[2];
+              previous.end = Number(row[1]);
+            } else groups.push({ start: Number(row[1]), end: Number(row[1]), text: row[2] });
+          }
+          const translated = await runChunkedBatch(groups.map(group => group.text), settings,
+            slice => translateChunk(slice, settings, glossary, fixedGlossary, forbiddenTerms), packChunks);
+          return { ...translated, translations: [groups.map((group, i) =>
+            `${group.start === group.end ? group.start : `${group.start}-${group.end}`}|${translated.translations[i]}`).join('\n')] };
+        }
+      }
+    }
+  }
   // 分批外層（packChunks + 累加 usage + 中途 throw 掛已付費 usage）走 llm-common runChunkedBatch
   return runChunkedBatch(texts, settings,
     (slice) => translateChunk(slice, settings, glossary, fixedGlossary, forbiddenTerms), packChunks);
+}
+
+function isWatchdogProvider(baseUrl) {
+  try {
+    const url = new URL(baseUrl);
+    return ['127.0.0.1', 'localhost'].includes(url.hostname) && url.port === '8080';
+  } catch (_) { return false; }
 }
 
 async function translateChunk(texts, settings, glossary, fixedGlossary, forbiddenTerms) {
@@ -126,6 +165,10 @@ async function translateChunk(texts, settings, glossary, fixedGlossary, forbidde
   if (model) body.model = model;
 
   const url = resolveChatCompletionsUrl(baseUrl);
+  // Watchdog knows the active model even when the provider model is blank.
+  if (isWatchdogProvider(baseUrl)) {
+    body.shinkansen_target_language = (LANG_LABELS[settings.targetLanguage] || settings.targetLanguage || '').split('(')[0].trim();
+  }
   await ensureLocalLlamaServer(url);
   // v1.6.7: apiKey 為空時不送 Authorization（本機 llama.cpp / Ollama 等不需要 key）
   const headers = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};

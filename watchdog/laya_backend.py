@@ -122,7 +122,8 @@ def main():
             if self.path != "/health":
                 self.send_json(404, {"error": {"message": "Not found"}})
                 return
-            self.send_json(200, {"status": "ok", "model": MODEL_ID, "device": str(agent.device), "pid": os.getpid()})
+            self.send_json(200, {"status": "ok", "model": MODEL_ID, "device": str(agent.device), "pid": os.getpid(),
+                                 "startup_token": os.environ.get("LAYA_STARTUP_TOKEN", "")})
 
         def do_POST(self):
             if self.path != "/v1/systemone":

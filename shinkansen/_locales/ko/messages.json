@@ -1,4 +1,6 @@
 {
+  "contextTranslatePage": { "message": "이 페이지 번역" },
+  "contextShowOriginal": { "message": "원문 보기" },
   "extName": {
     "message": "Shinkansen Custom",
     "description": "확장 프로그램 이름"

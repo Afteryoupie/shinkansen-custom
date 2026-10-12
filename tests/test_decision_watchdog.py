@@ -81,6 +81,45 @@ class DecisionRoutingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_venv_child_is_identified_by_startup_token(self):
+        d = DecisionManager()
+        d.models = Mock(return_value=[{}])
+        d._http = AsyncMock(return_value={"pid": 222, "startup_token": "test-token", "device": "cpu"})
+        proc = Mock(pid=111)
+        proc.poll.return_value = None
+        with patch("watchdog.decision.secrets.token_hex", return_value="test-token"), \
+             patch("watchdog.decision.LOG_FILE"), \
+             patch("watchdog.decision.subprocess.Popen", return_value=proc):
+            await d.wake()
+        self.assertEqual(d.device, "cpu")
+        self.assertFalse(d.starting)
+
+    async def test_unrelated_backend_is_rejected(self):
+        d = DecisionManager()
+        d.models = Mock(return_value=[{}])
+        d._http = AsyncMock(return_value={"pid": 111, "startup_token": "other"})
+        d.stop = Mock()
+        proc = Mock(pid=111)
+        proc.poll.return_value = None
+        with patch("watchdog.decision.secrets.token_hex", return_value="test-token"), \
+             patch("watchdog.decision.LOG_FILE"), \
+             patch("watchdog.decision.subprocess.Popen", return_value=proc):
+            with self.assertRaisesRegex(RuntimeError, "occupied"):
+                await d.wake()
+        d.stop.assert_called_once()
+        self.assertFalse(d.starting)
+
+    def test_windows_stop_terminates_venv_process_tree(self):
+        d = DecisionManager()
+        proc = Mock(pid=111)
+        proc.poll.return_value = None
+        d.proc = proc
+        with patch("watchdog.decision.sys.platform", "win32"), \
+             patch("watchdog.decision.subprocess.run") as run:
+            d.stop()
+        self.assertEqual(run.call_args.args[0], ["taskkill", "/F", "/T", "/PID", "111"])
+        self.assertIsNone(d.proc)
+
     async def test_concurrent_requests_serialize_and_clear_activity_on_error(self):
         d = DecisionManager()
         d._start = AsyncMock()

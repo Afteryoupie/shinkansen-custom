@@ -12,6 +12,8 @@ from PIL import Image
 import pystray
 
 API_BASE = 'http://127.0.0.1:8080'
+POLL_INTERVAL = 0.25
+MOUTH_HOLD_SECONDS = 1.0
 # A constant, non-interactive header anchors the width of both native menus.
 MENU_CAPTION = 'LLM watchdog' + '\u2007' * 28
 
@@ -74,7 +76,12 @@ def make_icon(status):
     path = Path(__file__).resolve().parents[1] / 'watchdog/assets' / f'watchdog-{state}.png'
     with Image.open(path) as source:
         image = source.convert('RGBA')
-    return image.resize((64, 64), Image.Resampling.LANCZOS)
+    # Shared bounds keep expressions aligned. A taller silhouette fills the
+    # fixed Windows tray slot without cutting off the nose or ear.
+    image = image.crop(image.getbbox()).resize((64, 60), Image.Resampling.LANCZOS)
+    canvas = Image.new('RGBA', (64, 64))
+    canvas.paste(image, ((64 - image.width) // 2, (64 - image.height) // 2))
+    return canvas
 
 class RightClickIcon(pystray.Icon):
     def _on_notify(self, wparam, lparam):
@@ -95,6 +102,9 @@ class LLMTray:
         self.quitting = False
         self.feedback = ''
         self.backend_pid = None
+        self._request_count = None
+        self._mouth_until = 0
+        self._icon_status = 'offline'
         self._tray = RightClickIcon('llm_watchdog', make_icon('offline'), 'LLM watchdog',
                                     menu=pystray.Menu(lambda: iter(self._items())))
 
@@ -149,7 +159,7 @@ class LLMTray:
         if feedback:
             items.append(pystray.MenuItem(compact_line(feedback), None, enabled=False))
         items.extend([pystray.Menu.SEPARATOR,
-                      pystray.MenuItem('退出 LLM watchdog…', self._quit, enabled=not quitting)])
+                      pystray.MenuItem('退出 LLM watchdog', self._quit, enabled=not quitting)])
         return items
 
     def _handler(self, path, label):
@@ -227,13 +237,9 @@ class LLMTray:
                 kernel.GlobalFree(handle)
 
     def _quit(self, icon=None, item=None):
-        import ctypes
         with self.lock:
             if self.quitting:
                 return
-        # MB_SETFOREGROUND | MB_TOPMOST: a tray-owned dialog must remain visible.
-        if ctypes.windll.user32.MessageBoxW(None, '結束 LLM watchdog？這會停止模型與本機 API 服務。', 'LLM watchdog', 0x24 | 0x10000 | 0x40000) != 6:
-            return
         if self.data or (self.backend_pid is not None and not self._backend_exited()):
             self.action('stop', '結束 LLM watchdog')
         else:
@@ -263,7 +269,14 @@ class LLMTray:
         except Exception:
             data = None
         with self.lock:
-            old_status = icon_state(self.data)
+            now = time.monotonic()
+            count = data.get('request_count') if data else None
+            new_request = count is not None and self._request_count is not None and count > self._request_count
+            if data and (data.get('active_requests', 0) > 0 or new_request):
+                self._mouth_until = now + MOUTH_HOLD_SECONDS
+            if not data:
+                self._mouth_until = 0
+            self._request_count = count
             self.data = data
             if data:
                 self.deadline = time.monotonic() + data.get('idle_remaining', 0)
@@ -275,8 +288,11 @@ class LLMTray:
                         pass
             state, countdown, _, _ = presentation(data, self.deadline, time.monotonic())
             status = icon_state(data)
-            if status != old_status:
+            if status == 'ready' and now < self._mouth_until:
+                status = 'running'
+            if status != self._icon_status:
                 self._tray.icon = make_icon(status)
+                self._icon_status = status
             self._tray.title = ('LLM watchdog · ' + state + ' · ' + countdown)[:127]
 
     def _poll(self):
@@ -285,7 +301,7 @@ class LLMTray:
             if self._backend_exited():
                 self._close()
                 return
-            self.closed.wait(2)
+            self.closed.wait(POLL_INTERVAL)
 
     def run(self):
         threading.Thread(target=self._poll, daemon=True).start()

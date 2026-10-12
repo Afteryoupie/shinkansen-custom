@@ -226,7 +226,7 @@
       return (units, signal) => SK.translateUnitsGoogle(units, { signal });
     }
     if (preset.engine === 'openai-compat') {
-      return (units, signal) => SK.translateUnits(units, { engine: 'openai-compat', convertDirection, signal });
+      return (units, signal) => SK.translateUnits(units, { engine: 'openai-compat', modelOverride: preset.model || null, convertDirection, signal });
     }
     return (units, signal) => SK.translateUnits(units, { modelOverride: preset.model || null, engine: 'gemini', convertDirection, signal });
   }

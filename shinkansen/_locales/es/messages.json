@@ -1,4 +1,6 @@
 {
+  "contextTranslatePage": { "message": "Traducir esta página" },
+  "contextShowOriginal": { "message": "Mostrar original" },
   "extName": {
     "message": "Shinkansen Custom",
     "description": "Nombre de la extensión"

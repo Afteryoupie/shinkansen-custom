@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import secrets
 
 from watchdog.config import MODELS_DIR, PACKAGE_DIR, DEFAULT_IDLE_TIMEOUT
 
@@ -86,7 +87,9 @@ class DecisionManager:
         self.starting = True
         self.last_error = ""
         try:
-            env = dict(os.environ, HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", TOKENIZERS_PARALLELISM="false")
+            startup_token = secrets.token_hex(16)
+            env = dict(os.environ, HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", TOKENIZERS_PARALLELISM="false",
+                       LAYA_STARTUP_TOKEN=startup_token, PYTHONUNBUFFERED="1")
             with LOG_FILE.open("w", encoding="utf-8") as log:
                 self.proc = subprocess.Popen([str(PYTHON), "-m", "watchdog.laya_backend",
                                               "--model", str(MODEL_DIR), "--port", str(INTERNAL_PORT)],
@@ -98,8 +101,9 @@ class DecisionManager:
                     raise RuntimeError("Laya failed to load; see " + str(LOG_FILE))
                 try:
                     health = await asyncio.wait_for(self._http("GET", "/health"), 1)
-                    # Do not adopt an unrelated process already occupying our port.
-                    if health.get("pid") != self.proc.pid:
+                    # Windows venv launchers run Python in a child with a different PID.
+                    # The inherited token identifies our backend without adopting another service.
+                    if health.get("startup_token") != startup_token:
                         raise RuntimeError("Laya port 8082 is occupied by another process")
                     self.device = health.get("device", "")
                     self.last_active = time.monotonic()
@@ -134,7 +138,11 @@ class DecisionManager:
 
     def stop(self):
         if self.proc is not None and self.proc.poll() is None:
-            self.proc.terminate()
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.proc.pid)],
+                               capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                self.proc.terminate()
             try:
                 self.proc.wait(timeout=2)
             except subprocess.TimeoutExpired:

@@ -1,4 +1,4 @@
-param ([switch]$Silent)
+﻿param ([switch]$Silent)
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $TrayScript = Join-Path $PSScriptRoot 'llm_tray.py'
 $Pythonw = 'C:\Users\Ninjader\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe'

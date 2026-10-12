@@ -43,6 +43,11 @@ def find_matching_mmproj(model_name: str) -> Optional[str]:
     is_vl = any(k in lower for k in ["vl", "vision", "llava", "minicpm", "moondream", "pixtral", "ovis"])
     if not is_vl:
         return None
+    model_dir = MODELS_DIR / model_name
+    if model_dir.is_dir():
+        for entry in sorted(model_dir.iterdir()):
+            if entry.is_file() and entry.suffix.lower() == ".gguf" and "mmproj" in entry.name.lower():
+                return str(entry.resolve())
     for entry in MODELS_DIR.iterdir():
         if entry.is_file() and entry.suffix.lower() == ".gguf" and "mmproj" in entry.name.lower():
             if "qwen3" in lower and "vl" in lower and "qwen3" in entry.name.lower() and "vl" in entry.name.lower():
