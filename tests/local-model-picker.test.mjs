@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { providerSettings } from '../shinkansen/lib/custom-provider-profiles.js';
 import { bindLocalModelPicker } from '../shinkansen/options/local-model-picker.js';
 import { migrateCustomProviderModelIfNeeded } from '../shinkansen/lib/storage.js';
 import { sanitizeImport } from '../shinkansen/options/import-sanitize.js';
@@ -61,6 +62,7 @@ test('Failure preserves saved model and stale local responses cannot replace rem
     assert.equal(c.select.value, 'saved-model');
     assert.equal(c.refresh.disabled, false);
     assert.equal(c.status.textContent, 'options.cp.localError');
+    assert.equal(c.input.hidden, false);
     let resolve;
     globalThis.fetch = () => new Promise(r => { resolve = r; });
     const pending = c.update();
@@ -72,6 +74,32 @@ test('Failure preserves saved model and stale local responses cannot replace rem
     assert.equal(c.select.hidden, true);
     assert.equal(c.input.value, 'saved-model');
     assert(!c.select.options.some(o => o.value === 'stale'));
+  } finally { Object.assign(globalThis, original); }
+});
+
+test('Explicit local configuration discovers LAN models with its own key', async () => {
+  const original = { fetch: globalThis.fetch, Option: globalThis.Option };
+  globalThis.Option = class { constructor(text, value) { Object.assign(this, { text, value }); } };
+  const c = controls();
+  c.baseUrl.value = 'http://192.168.1.4:8080/v1';
+  c.apiKey.value = 'local-key';
+  let requests = 0;
+  globalThis.fetch = async (url, options) => {
+    requests++;
+    assert.equal(url, 'http://192.168.1.4:8080/v1/models');
+    assert.equal(options.headers.Authorization, 'Bearer local-key');
+    return Response.json({ data: [{ id: 'lan-model' }] });
+  };
+  try {
+    let type = 'local';
+    const update = bindLocalModelPicker({ ...c, t: key => key, getProviderType: () => type });
+    await update();
+    assert.equal(c.select.options[1].value, 'lan-model');
+    type = 'online';
+    await update();
+    assert.equal(requests, 1);
+    assert.equal(c.input.hidden, false);
+    assert.equal(c.select.hidden, true);
   } finally { Object.assign(globalThis, original); }
 });
 
@@ -94,7 +122,7 @@ test('Production custom webpage handler sends preset model to adapter and cache 
   const end = source.indexOf('// ─── v1.4.0:', start);
   const settings = { targetLanguage: 'zh-TW', customProvider: { baseUrl: 'http://127.0.0.1:8080/v1', model: 'subtitle-default' } };
   const seen = [];
-  const context = { getSettingsCached: async () => settings,
+  const context = { providerSettings, __SKProviderPerformance: globalThis.__SKProviderPerformance, getSettingsCached: async () => settings,
     getEffectiveSystemPrompt: (_, prompt) => prompt,
     customProviderPricing: () => ({}), resolveCustomProviderCachedRate: () => 0,
     customProviderModelKeyPart: async cp => cp.model,
@@ -108,4 +136,11 @@ test('Production custom webpage handler sends preset model to adapter and cache 
   assert.equal(seen[0].keyParts.modelKeyPart, 'webpage-model');
   assert.equal(settings.customProvider.model, 'subtitle-default');
   assert.equal(await context.run({ texts: ['Hello'], modelOverride: null }), 'subtitle-default');
+  settings.customProviderOnline = { baseUrl: 'https://api.example.com/v1', model: 'cloud-default', apiKey: 'online-key' };
+  settings.customProviderLocal = { baseUrl: 'http://127.0.0.1:8080/v1', model: 'local-default', apiKey: 'local-key' };
+  assert.equal(await context.run({ texts: ['Hello'], engine: 'openai-compat-online' }), 'cloud-default');
+  assert.equal(seen.at(-1).settings.customProvider.apiKey, 'online-key');
+  assert.equal(await context.run({ texts: ['Hello'], engine: 'openai-compat-local', modelOverride: 'local-preset' }), 'local-preset');
+  assert.equal(seen.at(-1).settings.customProvider.apiKey, 'local-key');
+  assert.equal(settings.customProvider.model, 'subtitle-default');
 });

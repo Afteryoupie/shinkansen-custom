@@ -17,7 +17,7 @@
 | Laya 決策模型 | Watchdog 獨立管理 Laya multilingual，透過本機 `/v1/systemone` 協助字幕斷句、翻譯前過濾與翻譯後格式檢查；格式不合時只重試問題段落一次，保留真實對話與型號。 |
 | LLM watchdog | 附帶模型管理、按需喚醒、閒置休眠、macOS 選單列、Windows 系統匣與網頁控制台。另有 Apple Foundation Models 整合。 |
 | 狀態圖標 | 朝左狗狗：休眠／離線閉眼，準備／載入睜眼閉嘴，處理請求時張嘴。App 本體使用準備表情。 |
-| 設定介面 | 提早讀取主題偏好；移除設定頁的 iOS／iPadOS App Store 宣傳按鈕。 |
+| 設定介面 | 線上與本地自訂模型分頁保存端點、API Key、模型與參數，可明確切換使用；提早讀取主題偏好，移除 iOS／iPadOS App Store 宣傳按鈕。 |
 | 更新來源 | 停用原作者 GitHub Releases 自動檢查及提示，清除舊提示與定時檢查；此分支由使用者自行同步與重新載入。 |
 
 OpenAI 相容端點、Gemini、雙語翻譯與 OpenCC 等支援沿用或擴充既有能力。**資料是否送往外部取決於選用的翻譯引擎及決策 API 網址設定**；使用雲端 API 時，相關文字會送至該服務，並非所有模式都只在本機運算。
@@ -79,6 +79,18 @@ OpenAI 相容端點、Gemini、雙語翻譯與 OpenCC 等支援沿用或擴充�
 本分支不再提示原作者的新版本，請自行同步本儲存庫。同步前先保存自己的未提交修改。
 
 ## 本機翻譯設定
+
+設定頁分為「線上自訂模型」與「本地自訂模型」。兩組設定各自自動保存，翻譯快速鍵及字幕的引擎選單分別提供「線上自訂模型」與「本地自訂模型」；文件翻譯沿用選定的快速鍵預設來源。每組選項使用自己選定的設定，兩組 API Key 僅存於瀏覽器本機，不包含在設定匯出檔。既有「自訂模型」選項依端點網址歸入對應類型，模型與參數保留。
+
+本地分頁可取得 Watchdog、Ollama 或區域網路服務的模型清單；服務無法提供清單時，可手動填入模型 ID，留空則使用服務預設模型。更新後請重新載入擴充功能並重新開啟設定頁。
+
+兩個自訂模型分頁都有「網頁翻譯效能」與「套用建議加速設定」。批次／並行參數各自保存，與 Gemini 的全域參數分開。線上批次從首批開始並行；本地 Watchdog 預設 1 批，避免單一推論鎖累積排隊。首批上限分別為線上 6 段／1200 字元、本地 4 段／1000 字元，後續批次保留較大的字元預算。只翻文章開頭、取消及翻譯快取仍沿用原行為。
+
+對 `nvidia/nemotron-3-super-120b-a12b:free`，建議先套用加速設定：停用思考、使用緊湊段落標記、最多 2 批並行，後續每批 40 段／7000 字元。OpenRouter 的「關閉思考」改為送出 `reasoning.enabled: false`；`exclude` 只隱藏思考內容，無法省掉推理時間。進階 JSON 仍有覆蓋權，若自行啟用 reasoning，則不會保持關閉。
+
+本擴充的 OpenRouter 免費模型請求共用約 3.1 秒的啟動間隔，包含翻譯、逐段補譯、重試及術語擷取；其他應用仍會共用帳戶配額，服務端可能繼續限流。供應商路由預設速度優先並保留同一模型的備援，不加入付費替代模型。2026-10-12 查詢時，Nemotron 免費版僅列出 Nvidia 一個端點，所以目前不能靠供應商排序保證提速。
+
+研究依據：[OpenRouter 路由](https://openrouter.ai/docs/guides/routing/provider-selection)、[思考參數](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)、[請求限制](https://openrouter.ai/docs/api_reference/limits)、[Nemotron 免費端點](https://openrouter.ai/api/v1/models/nvidia/nemotron-3-super-120b-a12b%3Afree/endpoints)。上述調整以縮短首屏等待、移除首批阻塞及減少限流重試為目的；實際吞吐量與翻譯品質需依模型和服務負載實測。
 
 | 設定 | 建議值／說明 |
 | --- | --- |

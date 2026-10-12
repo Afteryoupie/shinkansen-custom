@@ -361,7 +361,7 @@
       ...DEFAULT_YT_CONFIG,
       ...(saved.ytSubtitle || {}),
       bilingualMode: saved.displayMode === 'dual',
-      localModel: _isLocalSubtitleProvider(saved.customProvider),
+      localModel: saved.ytSubtitle?.engine === 'openai-compat-local' || (saved.ytSubtitle?.engine !== 'openai-compat-online' && _isLocalSubtitleProvider(saved.customProvider)),
       targetLanguage: saved.targetLanguage || SK.STATE?.targetLanguage || 'zh-TW',
     };
     return SK.YT.config;
@@ -875,7 +875,7 @@
     const rejected = new Set();
     const send = async (input, skipCache = false) => {
       if (!current()) throw new Error('Subtitle session changed');
-      const res = await SK.safeSendMessage({ type, payload: { texts: input, glossary: null, skipCache, sourceLanguage: SK.YT.captionLang || 'auto' } });
+      const res = await SK.safeSendMessage({ type, payload: { engine: SK.YT.config?.engine, texts: input, glossary: null, skipCache, sourceLanguage: SK.YT.captionLang || 'auto' } });
       for (const [key, value] of Object.entries(res?.usage || {})) {
         if (typeof value === 'number') usage[key] = (usage[key] || 0) + value;
       }
@@ -915,7 +915,7 @@
 
   async function _settleSubtitleBatches(items, run) {
     const config = SK.YT.config;
-    if (!(config?.engine === 'openai-compat' && config.localModel)) return Promise.allSettled(items.map(run));
+    if (!(config?.engine?.startsWith('openai-compat') && config.localModel)) return Promise.allSettled(items.map(run));
     const results = [];
     for (let i = 0; i < items.length; i++) {
       try { results.push({ status: 'fulfilled', value: await run(items[i], i) }); }
@@ -2930,6 +2930,7 @@
     const res = await SK.safeSendMessage({
       type: _asrMsgType,
       payload: {
+        engine: SK.YT.config?.engine,
         texts: [inputJson],
         glossary: null,
         // background ASR prompt 注入 {sourceLanguage} 用;captionLang 從 /api/timedtext URL
@@ -3155,7 +3156,7 @@
     //          快速顯示前幾條,但接下來 batch 1 size=12 要 ~3-5s 才完,使用者中間視覺
     //          上像 freeze。縮到 4 讓「第 5-N 條」中文也快點冒,代價是 token 攤提變差
     //          (143 t/seg → 194 t/seg,+35%),但 isUrgent 場景 token 不是優先考量。
-    const localModel = YT.config?.engine === 'openai-compat' && YT.config.localModel;
+    const localModel = YT.config?.engine?.startsWith('openai-compat') && YT.config.localModel;
     const BATCH = localModel ? 1 : options?.isUrgent ? 4 : 12;
     // 批次 8 C6:ladder 抽單一資料源 _calcAdaptiveBatch0
     const { wallLeadMs, firstBatchSize: adaptiveSize } = _calcAdaptiveBatch0(windowStartMs);
@@ -3367,7 +3368,7 @@
     if (_shouldSkipBecauseAlreadyTraditionalChinese()) return;
     const config = YT.config || await getYtConfig();
     // 本地模型只使用前景視窗預翻。全軌 worker 與前景共用序列佇列會互相阻塞。
-    if (config.engine === 'openai-compat' && config.localModel) return;
+    if (config.engine?.startsWith('openai-compat') && config.localModel) return;
     if (YT.bgWorkerRunning || !YT.active) return;
 
     YT.bgWorkerRunning = true;
@@ -3566,7 +3567,7 @@
       // 預設開啟 → 「引擎改成 Google 還是在燒我的 API」(GitHub issue #58)。
       // options 端同步把「AI 分句」toggle 停用並說明,兩邊是同一份事實。
       const asrMode = (config.engine === 'google' ||
-        (config.engine === 'openai-compat' && config.localModel && config.asrMode !== 'llm'))
+        (config.engine?.startsWith('openai-compat') && config.localModel && config.asrMode !== 'llm'))
         ? 'heuristic'
         : (config.asrMode || 'progressive');  // 預設 progressive(混合模式)
 
@@ -3612,7 +3613,7 @@
       //   (~26% 攤提),size=16 降到 117 t(再 18%)。12 是 elapsed 持平處的甜蜜點:
       //   token 攤提 ~26% 但 elapsed 不變,純贏;再往上 16 elapsed 跳 60%,留給 batch 0
       //   adaptive ramp(lead 充裕時)。
-      const localModel = config.engine === 'openai-compat' && config.localModel;
+      const localModel = config.engine?.startsWith('openai-compat') && config.localModel;
       const BATCH = localModel ? 1 : 12;
       const preserve = true; // v1.2.38 起固定開啟，已移除設定頁 toggle
       const units = buildTranslationUnits(windowSegs, preserve);
@@ -3979,7 +3980,7 @@
       const configLookaheadMs = (YT.config?.lookaheadS ?? DEFAULT_YT_CONFIG.lookaheadS) * 1000;
       const playbackRate = YT.videoEl?.playbackRate || 1;
       // 本地單段首批時間不代表整窗完成時間，必須計入序列佇列全部批次。
-      const elapsed = config.engine === 'openai-compat' && config.localModel
+      const elapsed = config.engine?.startsWith('openai-compat') && config.localModel
         ? Date.now() - windowTranslationStarted : YT.lastApiMs;
       const needed = Math.ceil(elapsed * 1.3 * playbackRate);
       YT.adaptiveLookaheadMs = Math.min(Math.max(needed, configLookaheadMs), 60000);
@@ -4987,7 +4988,7 @@
       // 全量合併風險低;in-flight 批次沿用舊值屬可接受)。bilingualMode 是
       // displayMode 導出值,不吃 ytSubtitle(殘留 key 忽略),沿用當前值。
       if (SK.YT.config) {
-        SK.YT.config = { ...DEFAULT_YT_CONFIG, ...newVal, localModel: SK.YT.config.localModel, targetLanguage: SK.YT.config.targetLanguage, bilingualMode: SK.YT.config.bilingualMode === true };
+        SK.YT.config = { ...DEFAULT_YT_CONFIG, ...newVal, localModel: newVal.engine === 'openai-compat-local' || (newVal.engine !== 'openai-compat-online' && SK.YT.config.localModel), targetLanguage: SK.YT.config.targetLanguage, bilingualMode: SK.YT.config.bilingualMode === true };
       }
       // 字幕字級 scale:設定變更即時套用(overlay --sk-cue-size + iOS ::cue)
       if ('captionScale' in newVal) _applyYtCaptionScale(newVal.captionScale);
@@ -4996,7 +4997,7 @@
       SK.YT.config.targetLanguage = changes.targetLanguage.newValue;
     }
     if (changes.customProvider && SK.YT.config) {
-      SK.YT.config.localModel = _isLocalSubtitleProvider(changes.customProvider.newValue);
+      SK.YT.config.localModel = SK.YT.config.engine === 'openai-compat-local' || (SK.YT.config.engine !== 'openai-compat-online' && _isLocalSubtitleProvider(changes.customProvider.newValue));
     }
     if (changes.displayMode) {
       const newBilingual = changes.displayMode.newValue === 'dual';

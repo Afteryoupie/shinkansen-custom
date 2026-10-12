@@ -1571,3 +1571,13 @@ label.opacity-row small {
 
 /* First visit: reveal controls only after the saved theme has been read. */
 :root[data-theme-pending] body { visibility: hidden; }
+
+/* Separate model profiles share one editor, keeping field labels and focus stable. */
+.provider-status-card { border-left: 4px solid var(--accent-primary); padding-left: 16px; }
+.provider-status-card > small { display: block; }
+.tab-btn { min-height: 44px; }
+.tab-btn:focus-visible { outline: 2px solid var(--text-main); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .tab-btn { transition: none; } }
+
+#cp-speed-preset { min-height: 44px; margin-bottom: 12px; }
+#cp-web-performance small { display: block; }

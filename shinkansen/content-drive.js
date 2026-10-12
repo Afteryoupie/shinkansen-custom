@@ -206,7 +206,7 @@
   // 定義在 runtime gate 之前讓 regression spec 也能驗(localServer 主機名 ≠ drive.google.com)。
   function _normalizeDriveEngine(v) {
     if (v === 'google') return 'google';
-    if (v === 'openai-compat') return 'openai-compat';
+    if (v?.startsWith('openai-compat')) return v;
     return 'gemini';
   }
 
@@ -317,7 +317,7 @@
     try {
       res = await SK.safeSendMessage({
         type: msgType,
-        payload: { texts: [inputJson], glossary: null },
+        payload: { engine: engineLabel, texts: [inputJson], glossary: null },
       });
     } catch (e) {
       SK.sendLog('warn', 'drive', `batch ${batchIdx + 1}/${totalBatches} ${engineLabel} sendMessage failed`, {
@@ -522,8 +522,8 @@
         }
         if (engine === 'google') {
           await _runOneBatchGoogle(batches[idx], idx, totalBatches, runId);
-        } else if (engine === 'openai-compat') {
-          await _runOneBatchLlm(batches[idx], idx, totalBatches, 'TRANSLATE_DRIVE_ASR_SUBTITLE_BATCH_CUSTOM', 'openai-compat', runId);
+        } else if (engine?.startsWith('openai-compat')) {
+          await _runOneBatchLlm(batches[idx], idx, totalBatches, 'TRANSLATE_DRIVE_ASR_SUBTITLE_BATCH_CUSTOM', engine, runId);
         } else {
           await _runOneBatchLlm(batches[idx], idx, totalBatches, 'TRANSLATE_DRIVE_ASR_SUBTITLE_BATCH', 'gemini', runId);
         }

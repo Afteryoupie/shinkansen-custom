@@ -1,5 +1,6 @@
 // storage.js — 設定讀寫封裝
 import { browser } from './compat.js';
+import { resolveProviderProfiles, activeProvider } from './custom-provider-profiles.js';
 import { DEFAULT_UNITS_PER_BATCH, DEFAULT_CHARS_PER_BATCH } from './constants.js';
 
 // v0.83: 預設 system prompt 全面升級——從「翻譯助理」提升為「首席翻譯專家」，
@@ -1187,7 +1188,7 @@ function _bindSettingsCacheInvalidator() {
   // local 的大項設定（LOCAL_SETTINGS_KEYS，批次 6）。
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== 'sync' && !(area === 'local' && changes
-      && (API_KEY_STORAGE_KEY in changes || CUSTOM_PROVIDER_API_KEY in changes
+      && (API_KEY_STORAGE_KEY in changes || CUSTOM_PROVIDER_API_KEY in changes || 'customProviderApiKeys' in changes
         || LOCAL_SETTINGS_KEYS.some((k) => k in changes)))) return;
     _settingsCachePromise = null;
   });
@@ -1223,7 +1224,7 @@ export async function getSettings() {
   // 大項設定（固定術語表 / 禁用詞）存 local：sync 殘留先搬過去，再以 local 為準（批次 6）
   await migrateLargeKeysToLocalIfNeeded(saved);
   // local 一次讀完：apiKey（v0.62 起的正規位置）+ customProvider apiKey + 大項設定
-  const localAll = await browser.storage.local.get([API_KEY_STORAGE_KEY, CUSTOM_PROVIDER_API_KEY, ...LOCAL_SETTINGS_KEYS]);
+  const localAll = await browser.storage.local.get([API_KEY_STORAGE_KEY, CUSTOM_PROVIDER_API_KEY, 'customProviderApiKeys', ...LOCAL_SETTINGS_KEYS]);
   for (const k of LOCAL_SETTINGS_KEYS) {
     if (Object.prototype.hasOwnProperty.call(localAll, k)) saved[k] = localAll[k];
   }
@@ -1270,7 +1271,14 @@ export async function getSettings() {
   };
   merged.apiKey = apiKey;
   // v1.5.7: customProvider apiKey 也在 local（上面一次讀完）
-  merged.customProvider.apiKey = localAll[CUSTOM_PROVIDER_API_KEY] || '';
+  const providerState = resolveProviderProfiles(saved, DEFAULT_SETTINGS.customProvider, localAll);
+  merged.customProvider = activeProvider(providerState);
+  merged.customProviderType = providerState.activeType;
+  for (const type of ['online', 'local']) {
+    merged[type === 'online' ? 'customProviderOnline' : 'customProviderLocal'] = {
+      ...providerState.profiles[type], profileType: type, apiKey: providerState.keys[type] || '',
+    };
+  }
   return merged;
 }
 
@@ -1313,12 +1321,23 @@ export async function setSettings(patch) {
     delete rest.apiKey;
   }
 
-  // 自訂 Provider API Key（v1.5.7）
-  if (rest.customProvider && Object.prototype.hasOwnProperty.call(rest.customProvider, 'apiKey')) {
+  // Keep legacy callers in sync with the selected profile; keys stay local.
+  if (rest.customProvider) {
+    const saved = await browser.storage.sync.get(null);
+    const local = await browser.storage.local.get(['customProviderApiKey', 'customProviderApiKeys']);
+    const state = resolveProviderProfiles({ ...saved, ...rest }, DEFAULT_SETTINGS.customProvider, local);
     const cp = { ...rest.customProvider };
-    await browser.storage.local.set({ [CUSTOM_PROVIDER_API_KEY]: cp.apiKey });
-    delete cp.apiKey;
-    rest.customProvider = cp;
+    if (Object.prototype.hasOwnProperty.call(cp, 'apiKey')) {
+      state.keys[state.activeType] = cp.apiKey;
+      await browser.storage.local.set({
+        customProviderApiKeys: state.keys, [CUSTOM_PROVIDER_API_KEY]: cp.apiKey,
+      });
+      delete cp.apiKey;
+    }
+    const key = state.activeType === 'online' ? 'customProviderOnline' : 'customProviderLocal';
+    rest[key] = { ...state.profiles[state.activeType], ...cp };
+    rest.customProvider = { ...rest[key] };
+    rest.customProviderType = state.activeType;
   }
 
   // 大項設定（固定術語表 / 禁用詞）走 local（批次 6）

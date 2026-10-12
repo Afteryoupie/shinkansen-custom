@@ -183,7 +183,7 @@ export async function translateDocument(doc, options = {}) {
 
   emit();
 
-  const messageType = engine === 'openai-compat' ? 'TRANSLATE_DOC_BATCH_CUSTOM' : 'TRANSLATE_DOC_BATCH';
+  const messageType = engine?.startsWith('openai-compat') ? 'TRANSLATE_DOC_BATCH_CUSTOM' : 'TRANSLATE_DOC_BATCH';
 
   const accountUsage = (usage = {}) => {
     // `??` 而非 `||`:billedInputTokens === 0(全 cache hit / 全免費)是合法值,
@@ -302,7 +302,7 @@ export async function translateDocument(doc, options = {}) {
     const chunkGlossary = filterGlossary
       ? filterGlossaryForTexts(glossary, texts)
       : glossary;
-    const payload = { texts, modelOverride, glossary: chunkGlossary, preferArticleGlossary: true, extraForbiddenTerms, docBatchSize: chunkSize, extraPrompt };
+    const payload = { engine, texts, modelOverride, glossary: chunkGlossary, preferArticleGlossary: true, extraForbiddenTerms, docBatchSize: chunkSize, extraPrompt };
 
     const t0 = Date.now();
     let response;
@@ -496,10 +496,10 @@ export async function translateSingleBlock(block, options = {}) {
 
   let response;
   try {
-    const messageType = engine === 'openai-compat' ? 'TRANSLATE_DOC_BATCH_CUSTOM' : 'TRANSLATE_DOC_BATCH';
+    const messageType = engine?.startsWith('openai-compat') ? 'TRANSLATE_DOC_BATCH_CUSTOM' : 'TRANSLATE_DOC_BATCH';
     response = await chrome.runtime.sendMessage({
       type: messageType,
-      payload: { texts: [buildMarkedText(block)], modelOverride, glossary, preferArticleGlossary: true, extraPrompt },
+      payload: { engine, texts: [buildMarkedText(block)], modelOverride, glossary, preferArticleGlossary: true, extraPrompt },
     });
   } catch (err) {
     const msg = (err && err.message) || String(err);

@@ -88,11 +88,13 @@ export async function fetchWithRetry(url, body, {
   timeoutRetries = null,
   logPrefix = 'llm',
   classify429 = null,
+  beforeFetch = null,
 } = {}) {
   const timeoutRetryCap = (typeof timeoutRetries === 'number') ? timeoutRetries : maxRetries;
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    if (beforeFetch) await beforeFetch();
     const controller = new AbortController();
     const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
     try {

@@ -482,11 +482,11 @@ if (window.__shinkansen_loaded) {
   //   兩路；engine='google' 在 ASR LLM 下走 Gemini fallback
   SK.getSubtitleBatchType = function getSubtitleBatchType(engine, asr) {
     if (asr) {
-      if (engine === 'openai-compat') return 'TRANSLATE_ASR_SUBTITLE_BATCH_CUSTOM';
+      if (engine?.startsWith('openai-compat')) return 'TRANSLATE_ASR_SUBTITLE_BATCH_CUSTOM';
       return 'TRANSLATE_ASR_SUBTITLE_BATCH';
     }
     if (engine === 'google')        return 'TRANSLATE_SUBTITLE_BATCH_GOOGLE';
-    if (engine === 'openai-compat') return 'TRANSLATE_SUBTITLE_BATCH_CUSTOM';
+    if (engine?.startsWith('openai-compat')) return 'TRANSLATE_SUBTITLE_BATCH_CUSTOM';
     return 'TRANSLATE_SUBTITLE_BATCH';
   };
 
@@ -497,7 +497,7 @@ if (window.__shinkansen_loaded) {
   // _diag 提示；這是已知 trade-off — 翻譯主路徑用 Google MT 但仍想要 LLM 抽術語表的
   // 使用者必須額外填 Gemini Key。
   SK.getGlossaryExtractType = function getGlossaryExtractType(engine) {
-    if (engine === 'openai-compat') return 'EXTRACT_GLOSSARY_CUSTOM';
+    if (engine?.startsWith('openai-compat')) return 'EXTRACT_GLOSSARY_CUSTOM';
     return 'EXTRACT_GLOSSARY';
   };
 

@@ -10,8 +10,8 @@
 // 字串切換 import 不同 module，其他流程（cache / 注入 / segment mismatch fallback）
 // 完全共用。
 //
-// Rate limiter / RPD 配額：bypass（Jimmy 設計決定 #5）。OpenRouter 等 provider
-// 自己處理配額；429 退避重試由 lib/llm-common.js fetchWithRetry 處理（與 Gemini 共用，
+// OpenRouter :free 請求共用啟動間隔；每日配額與其他 provider 的限流由服務端處理。
+// 429 退避重試由 lib/llm-common.js fetchWithRetry 處理（與 Gemini 共用，
 // 2026-09-12 批次 6 §5.1 收斂；本檔只剩 request body 組裝與 choices / usage 形狀抽取）。
 //
 // systemInstruction 構建：使用者自訂的 customProvider.systemPrompt 是 base，
@@ -24,6 +24,7 @@ import { DELIMITER, MARKER_COMPACT, MARKER_STRONG, packChunks, buildEffectiveSys
 // v1.6.18: thinking 控制 mapping（各家 provider 的 thinking schema 不同，統一成
 // thinkingLevel 'auto/off/low/medium/high' + extraBodyJson 進階透傳）
 import { buildThinkingPayload } from './openai-compat-thinking.js';
+import { waitForFreeRequest } from './openrouter-rate-limit.js';
 import { codedError } from './bg-error.js'; // 使用者面對錯誤帶 error code 過協定，content 端查 dict 翻譯
 import { LANG_LABELS } from './storage.js';
 
@@ -142,6 +143,7 @@ async function translateChunk(texts, settings, glossary, fixedGlossary, forbidde
   // 若 user 的 extraBodyJson 解析失敗，debugLog 一條 warn 但不阻斷翻譯。
   const thinkingPayload = buildThinkingPayload({
     baseUrl, model,
+    routingSort: cp.routingSort, allowFallbacks: cp.allowFallbacks,
     level: thinkingLevel || 'auto',
     extraBodyRaw: extraBodyJson || '',
     onWarn: (msg) => { debugLog('warn', 'api', `customProvider thinking config: ${msg}`); },
@@ -188,7 +190,8 @@ async function translateChunk(texts, settings, glossary, fixedGlossary, forbidde
   const timeoutMs = (typeof fetchTimeoutSec === 'number' && fetchTimeoutSec > 0)
     ? fetchTimeoutSec * 1000
     : DEFAULT_FETCH_TIMEOUT_MS;
-  const fetchOpts = { maxRetries, timeoutMs, headers, logPrefix: 'openai-compat' };
+  const fetchOpts = { maxRetries, timeoutMs, headers, logPrefix: 'openai-compat',
+    beforeFetch: () => waitForFreeRequest(cp) };
   const resp = await fetchWithRetry(url, body, fetchOpts);
 
   // API 回傳非 JSON 時帶前 200 字 preview 拋 customBadResponse（llm-common readJsonBody）
@@ -322,6 +325,9 @@ export async function extractGlossary(compressedText, settings) {
       { role: 'user', content: compressedText },
     ],
     stream: false,
+    ...buildThinkingPayload({ baseUrl, model, level: cp.thinkingLevel || 'auto',
+      routingSort: cp.routingSort, allowFallbacks: cp.allowFallbacks,
+      extraBodyRaw: cp.extraBodyJson || '' }),
   };
   // v2.0.79:術語表抽取打的是同一個 provider endpoint——自訂模型 temperature 留空
   //(null)代表該 provider 不接受此參數,術語表路徑也必須不送,否則主翻譯正常、
@@ -340,6 +346,7 @@ export async function extractGlossary(compressedText, settings) {
 
   const t0 = Date.now();
   const controller = new AbortController();
+  await waitForFreeRequest(cp);
   const abortTimer = setTimeout(() => controller.abort(), fetchTimeoutMs);
   let resp;
   try {

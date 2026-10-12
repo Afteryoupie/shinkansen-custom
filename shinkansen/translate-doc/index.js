@@ -855,11 +855,12 @@ async function extractGlossaryForDoc(doc, { forceRefresh = false } = {}) {
   // modelOverride：術語擷取模型設「與主翻譯模型相同」時，對文件翻譯要用頁面
   // preset 而非全域模型（2026-07-10）。抽取常發生在翻譯開始前
   //（currentModelOverride 尚未設定），就地解析 preset
-  const presetModel = currentModelOverride || (await resolvePreset()).modelOverride || null;
+  const preset = await resolvePreset();
+  const presetModel = currentModelOverride || preset.modelOverride || null;
   try {
     const res = await chrome.runtime.sendMessage({
-      type: 'EXTRACT_GLOSSARY',
-      payload: { compressedText, inputHash, forceRefresh, modelOverride: presetModel },
+      type: preset.engine?.startsWith('openai-compat') ? 'EXTRACT_GLOSSARY_CUSTOM' : 'EXTRACT_GLOSSARY',
+      payload: { compressedText, inputHash, forceRefresh, modelOverride: presetModel, engine: preset.engine },
     });
     if (res?.ok && Array.isArray(res.glossary) && res.glossary.length > 0) {
       // 人名間隔號正規化（同 mergeBookGlossaries 的 EPUB 路徑）
@@ -894,7 +895,7 @@ async function resolvePreset() {
   const p = presets.find((x) => x && x.slot === (currentPresetSlot || 1));
   if (!p) return { engine: 'gemini', modelOverride: undefined };
   const engine = p.engine || 'gemini';
-  const modelOverride = (engine === 'gemini' && p.model) ? p.model : undefined;
+  const modelOverride = (engine !== 'google' && p.model) ? p.model : undefined;
   return { engine, modelOverride };
 }
 
@@ -966,7 +967,9 @@ async function openSettingsDialog() {
     row.className = 'settings-preset-row' + (slot === currentPresetSlot ? ' is-selected' : '');
     const engineLabel = p.engine === 'gemini' ? (p.model || 'gemini')
       : p.engine === 'google' ? 'Google MT'
-      : p.engine;
+      : p.engine === 'openai-compat-online' ? t('options.tab.customOnline')
+      : p.engine === 'openai-compat-local' ? t('options.tab.customLocal')
+      : t('options.preset.engineCustom');
     const presetLabel = t('doc.settings.preset.label', {
       name: t(nameKey, nameParams),
       shortcut,

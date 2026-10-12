@@ -71,6 +71,7 @@
       ],
       "js": [
         "content-ns.js",
+        "lib/provider-performance.js",
         "lib/distribution-cs.js",
         "lib/i18n-content.js",
         "lib/shortcut-utils.js",

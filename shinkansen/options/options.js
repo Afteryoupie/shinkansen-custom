@@ -6,7 +6,8 @@ initTheme();
 
 import { browser } from '../lib/compat.js';
 import { isLocalSubtitleProvider } from '../lib/local-subtitle.js';
-import { bindLocalModelPicker, fillModelSelect } from './local-model-picker.js';
+import { resolveProviderProfiles, activeProvider, providerConfig, CUSTOM_ENGINES } from '../lib/custom-provider-profiles.js';
+import { bindLocalModelPicker, fillModelSelect, fetchLocalModels } from './local-model-picker.js';
 import { DEFAULT_SETTINGS, DEFAULT_SYSTEM_PROMPT, DEFAULT_GLOSSARY_PROMPT, DEFAULT_SUBTITLE_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS, isLegacyDefaultForbiddenTerms, TARGET_LANGUAGES, UI_LANGUAGES, getEffectiveSystemPrompt, getEffectiveSubtitleSystemPrompt, getEffectiveGlossaryPrompt, isPromptUnchangedFromDefault, isPromptUnchangedFromAnyTargetDefault, LOCAL_SETTINGS_KEYS, migrateLargeKeysToLocalIfNeeded, overlayLocalSettings, splitSettingsPatch } from '../lib/storage.js';
 import { formatTokens, formatUSD, formatMoney, parseUserNum, buildUsageCsvFilename, formatYmdHms } from '../lib/format.js';
 import { sanitizeImport as sanitizeImportImpl } from './import-sanitize.js';
@@ -67,6 +68,136 @@ let _currentTargetLang = DEFAULT_SETTINGS.targetLanguage;
 // 否則每次 load() 疊一個 storage.onChanged listener → 切語言 callback 跑 N 次
 // (連帶 refreshExchangeRateDisplay 的 sendMessage 放大)。此旗標確保只訂閱一次。
 let _uiLangChangeSubscribed = false;
+
+let providerState = resolveProviderProfiles({}, DEFAULTS.customProvider);
+let editingProviderType = providerState.activeType;
+let providerEditorRevision = 0;
+
+function fillProviderForm(cp) {
+  $('cp-baseUrl').value = cp.baseUrl || '';
+  $('cp-baseUrl').setCustomValidity('');
+  // v1.8.41:initial check Firefox HTTPS-Only Mode 警告
+  refreshFirefoxHttpsWarn();
+  // v1.8.44:initial check Firefox 快捷鍵衝突警告(Alt+S/A/D 被 Firefox 內建或第三方擴充攔截)
+  refreshFirefoxShortcutWarn();
+  $('cp-model').value = cp.model || '';
+  $('cp-systemPrompt').value = cp.systemPrompt || '';
+  // v2.0.79:null = 使用者刻意留空(不送 temperature 給 provider)→ UI 也顯示空白;
+  // undefined(舊設定沒寫過)才回填預設 0.7
+  $('cp-temperature').value = (typeof cp.temperature === 'number')
+    ? cp.temperature
+    : (cp.temperature === null ? '' : 0.7);
+  $('cp-fetchTimeout').value = (typeof cp.fetchTimeoutSec === 'number') ? cp.fetchTimeoutSec : 90;
+  $('cp-inputPerMTok').value = cp.inputPerMTok != null ? cp.inputPerMTok : '';
+  $('cp-outputPerMTok').value = cp.outputPerMTok != null ? cp.outputPerMTok : '';
+  // v1.9.2: cache 命中折扣 — UI 顯示百分比(0-100),儲存仍為比例(0-1);null/undefined → 空白
+  $('cp-cachedDiscount').value = (cp.cachedDiscount != null && Number.isFinite(Number(cp.cachedDiscount))
+    ? Math.round(Number(cp.cachedDiscount) * 100)
+    : '');
+  // v1.6.18: thinking 控制
+  const validLevels = ['auto', 'off', 'low', 'medium', 'high'];
+  const tl = validLevels.includes(cp.thinkingLevel) ? cp.thinkingLevel : 'auto';
+  if ($('cp-thinking-level')) $('cp-thinking-level').value = tl;
+  if ($('cp-extra-body-json')) $('cp-extra-body-json').value = (typeof cp.extraBodyJson === 'string') ? cp.extraBodyJson : '';
+  // 強化段序號標記。舊使用者升級後 undefined,等同預設 true(對齊 storage.js DEFAULTS)
+  if ($('cp-strong-seg-marker')) $('cp-strong-seg-marker').checked = cp.useStrongSegMarker !== false;
+  $('cp-apiKey').value = providerState.keys[editingProviderType] || '';
+  $('cp-apiKey').type = 'password';
+  $('cp-toggle-apiKey').textContent = _t('options.action.show');
+  $('cp-test-apiKey-result').hidden = true;
+  const performance = globalThis.__SKProviderPerformance.config(cp, editingProviderType);
+  $('cp-web-concurrency').value = performance.webConcurrency;
+  $('cp-web-units').value = performance.webBatchUnits;
+  $('cp-web-chars').value = performance.webBatchChars;
+  $('cp-routing-sort').value = cp.routingSort || 'throughput';
+  $('cp-allow-fallbacks').checked = cp.allowFallbacks !== false;
+}
+
+function collectProviderForm() {
+  return {
+      baseUrl: ($('cp-baseUrl').value || '').trim(),
+      model: ($('cp-model').value || '').trim(),
+      systemPrompt: $('cp-systemPrompt').value || '',
+      // v1.8.20: temperature 改 parseUserNum 避免 0 被當 falsy；單價 0 是合法值改 parseUserNum 0
+      // v2.0.79:空欄改存 null(= 請求不送 temperature,給只吃自家預設值的 reasoning model
+      // 用,issue #60),不再 fallback 預設 0.7——0.7 讓那些 model 直接 400
+      temperature: (() => {
+        const raw = String($('cp-temperature').value ?? '').trim();
+        if (raw === '') return null;
+        return parseUserNum(raw, DEFAULTS.customProvider?.temperature ?? 0.7);
+      })(),
+      fetchTimeoutSec: parseUserNum($('cp-fetchTimeout').value, DEFAULTS.customProvider?.fetchTimeoutSec ?? 90),
+      // 單價空欄 fallback 0 是刻意 sentinel（空 = 無計價，費用顯示 $0），不引 DEFAULTS 的
+      // OpenRouter 校準單價——清空欄位不該悄悄用別人的價格估費
+      inputPerMTok: parseUserNum($('cp-inputPerMTok').value, 0),
+      outputPerMTok: parseUserNum($('cp-outputPerMTok').value, 0),
+      // v1.9.2: UI 0-100% → 儲存比例 0-1;空白 → null(讓 background 走 baseUrl 自動推導)
+      cachedDiscount: (() => {
+        const raw = $('cp-cachedDiscount')?.value?.trim();
+        if (!raw) return null;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+        return n / 100;
+      })(),
+      thinkingLevel: (() => {
+        const v = $('cp-thinking-level')?.value;
+        return ['auto', 'off', 'low', 'medium', 'high'].includes(v) ? v : 'auto';
+      })(),
+      extraBodyJson: ($('cp-extra-body-json')?.value || '').trim(),
+      // 強化段序號標記(預設 true)。讀取走 cp.useStrongSegMarker !== false 等同預設開啟,
+      // 對齊舊使用者升級後 undefined 也得到新行為。
+      useStrongSegMarker: $('cp-strong-seg-marker')?.checked !== false,
+      webConcurrency: Number($('cp-web-concurrency').value),
+      webBatchUnits: Number($('cp-web-units').value),
+      webBatchChars: Number($('cp-web-chars').value),
+      routingSort: $('cp-routing-sort').value,
+      allowFallbacks: $('cp-allow-fallbacks').checked,
+  };
+}
+
+function captureProviderProfile() {
+  providerState.profiles[editingProviderType] = {
+    ...providerState.profiles[editingProviderType], ...collectProviderForm(),
+  };
+  providerState.keys[editingProviderType] = $('cp-apiKey').value.trim();
+}
+
+function currentCustomProvider(engine) {
+  const type = engine === 'openai-compat-online' ? 'online' : engine === 'openai-compat-local' ? 'local' : providerState.activeType;
+  return type === editingProviderType ? collectProviderForm() : providerState.profiles[type];
+}
+
+function selectedEngine(engine) {
+  return engine === 'openai-compat' ? 'openai-compat-' + providerState.activeType : engine;
+}
+
+function updateProviderStatus() {
+  const local = editingProviderType === 'local';
+  $('cp-profile-heading').textContent = _t(local ? 'options.tab.customLocal' : 'options.tab.customOnline');
+  $('cp-profile-description').textContent = _t(local ? 'options.cp.localProfileIntro' : 'options.cp.onlineProfileIntro');
+  $('cp-local-help').hidden = !local;
+  $('cp-model-hint').setAttribute('data-i18n-html', local ? 'options.cp.localModelHint' : 'options.cp.modelHint.html');
+  $('cp-model-hint').textContent = _t(local ? 'options.cp.localModelHint' : 'options.cp.modelHint.html').replace(/<[^>]+>/g, '');
+  $('cp-baseUrl').placeholder = local ? 'http://127.0.0.1:8080/v1' : 'https://openrouter.ai/api/v1';
+  $('cp-baseUrl').removeAttribute('data-i18n-attr-placeholder');
+  $('cp-baseurl-hint').textContent = _t(local ? 'options.cp.localUrlHint' : 'options.cp.onlineUrlHint');
+  const provider = collectProviderForm();
+  const free = !local && globalThis.__SKProviderPerformance.isFreeProvider(provider);
+  $('cp-web-concurrency').max = free ? '2' : '50';
+  $('cp-speed-hint').textContent = _t(local ? 'options.cp.speed.localHint' : free ? 'options.cp.speed.freeHint' : 'options.cp.speed.onlineHint');
+  $('cp-openrouter-routing').hidden = local || !globalThis.__SKProviderPerformance.isOpenRouter(provider.baseUrl);
+  $('cp-nemotron-hint').hidden = provider.model !== 'nvidia/nemotron-3-super-120b-a12b:free';
+}
+
+function showProviderProfile(type, capture = true) {
+  if (capture) captureProviderProfile();
+  providerEditorRevision++;
+  editingProviderType = type;
+  $('tab-' + (type === 'local' ? 'custom-local' : 'custom-provider')).append($('custom-provider-form'));
+  fillProviderForm(providerState.profiles[type]);
+  updateProviderStatus();
+  if (capture) refreshLocalModels();
+}
 
 async function load() {
   const saved = await browser.storage.sync.get(null);
@@ -242,42 +373,18 @@ async function load() {
 
   // v1.5.7: 自訂 OpenAI-compatible Provider
   // apiKey 走 storage.local（不在 sync 也不在 saved 物件，獨立讀取）
-  const cp = { ...DEFAULTS.customProvider, ...(s.customProvider || {}) };
-  $('cp-baseUrl').value = cp.baseUrl || '';
-  // v1.8.41:initial check Firefox HTTPS-Only Mode 警告
-  refreshFirefoxHttpsWarn();
-  // v1.8.44:initial check Firefox 快捷鍵衝突警告(Alt+S/A/D 被 Firefox 內建或第三方擴充攔截)
-  refreshFirefoxShortcutWarn();
-  $('cp-model').value = cp.model || '';
-  $('cp-systemPrompt').value = cp.systemPrompt || '';
-  // v2.0.79:null = 使用者刻意留空(不送 temperature 給 provider)→ UI 也顯示空白;
-  // undefined(舊設定沒寫過)才回填預設 0.7
-  $('cp-temperature').value = (typeof cp.temperature === 'number')
-    ? cp.temperature
-    : (cp.temperature === null ? '' : 0.7);
-  $('cp-fetchTimeout').value = (typeof cp.fetchTimeoutSec === 'number') ? cp.fetchTimeoutSec : 90;
-  $('cp-inputPerMTok').value = cp.inputPerMTok != null ? cp.inputPerMTok : '';
-  $('cp-outputPerMTok').value = cp.outputPerMTok != null ? cp.outputPerMTok : '';
-  // v1.9.2: cache 命中折扣 — UI 顯示百分比(0-100),儲存仍為比例(0-1);null/undefined → 空白
-  $('cp-cachedDiscount').value = (Number.isFinite(Number(cp.cachedDiscount))
-    ? Math.round(Number(cp.cachedDiscount) * 100)
-    : '');
-  // v1.6.18: thinking 控制
-  const validLevels = ['auto', 'off', 'low', 'medium', 'high'];
-  const tl = validLevels.includes(cp.thinkingLevel) ? cp.thinkingLevel : 'auto';
-  if ($('cp-thinking-level')) $('cp-thinking-level').value = tl;
-  if ($('cp-extra-body-json')) $('cp-extra-body-json').value = (typeof cp.extraBodyJson === 'string') ? cp.extraBodyJson : '';
-  // 強化段序號標記。舊使用者升級後 undefined,等同預設 true(對齊 storage.js DEFAULTS)
-  if ($('cp-strong-seg-marker')) $('cp-strong-seg-marker').checked = cp.useStrongSegMarker !== false;
-  // 從 storage.local 讀 customProviderApiKey
-  const { customProviderApiKey = '' } = await browser.storage.local.get('customProviderApiKey');
-  $('cp-apiKey').value = customProviderApiKey;
+  const localProviderKeys = await browser.storage.local.get(['customProviderApiKey', 'customProviderApiKeys']);
+  providerState = resolveProviderProfiles(s, DEFAULTS.customProvider, localProviderKeys);
+  const cp = activeProvider(providerState);
+  const visibleTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+  editingProviderType = visibleTab === 'custom-provider' ? 'online' : visibleTab === 'custom-local' ? 'local' : providerState.activeType;
+  showProviderProfile(editingProviderType, false);
 
   // v1.2.11: YouTube 字幕設定
   const yt = { ...DEFAULTS.ytSubtitle, ...(s.ytSubtitle || {}) };
   // v1.4.0: 字幕翻譯引擎
   const ytEngineEl = $('ytEngine');
-  if (ytEngineEl) ytEngineEl.value = yt.engine || 'gemini';
+  if (ytEngineEl) ytEngineEl.value = selectedEngine(yt.engine || 'gemini');
   $('ytAutoTranslate').checked       = yt.autoTranslate       === true;
   // v1.6.23: ASR 分句改單一 toggle——開啟=progressive（混合模式）、關閉=heuristic（預設分句）。
   // 舊 'llm' 值視為 progressive（行為相近，LLM 結果仍會顯示；只是改成漸進方式）。
@@ -309,15 +416,15 @@ async function load() {
 
   // v1.4.13: 三組 preset 快速鍵
   // v1.5.7: engine 接受三種 'gemini' / 'google' / 'openai-compat'，不認識的回退 'gemini'
-  const VALID_ENGINES = ['gemini', 'google', 'openai-compat'];
+  const VALID_ENGINES = ['gemini', 'google', ...CUSTOM_ENGINES];
   const presets = Array.isArray(s.translatePresets) && s.translatePresets.length > 0
     ? s.translatePresets
     : DEFAULTS.translatePresets;
   for (const slot of [1, 2, 3]) {
     const p = presets.find(x => x.slot === slot) || DEFAULTS.translatePresets.find(x => x.slot === slot);
     $(`preset-label-${slot}`).value = p.label || '';
-    $(`preset-engine-${slot}`).value = VALID_ENGINES.includes(p.engine) ? p.engine : 'gemini';
-    fillModelSelect($(`preset-local-model-${slot}`), p.engine === 'openai-compat' ? (p.model || '') : '', [], _t('options.cp.localInherit'));
+    $(`preset-engine-${slot}`).value = VALID_ENGINES.includes(p.engine) ? selectedEngine(p.engine) : 'gemini';
+    fillModelSelect($(`preset-local-model-${slot}`), p.engine?.startsWith('openai-compat') ? (p.model || '') : '', [], _t('options.cp.localInherit'));
     const modelSel = $(`preset-model-${slot}`);
     if (p.model && [...modelSel.options].some(o => o.value === p.model)) {
       modelSel.value = p.model;
@@ -410,6 +517,7 @@ async function load() {
   if (I18N) {
     const dictLang = I18N.getUiLanguage($('uiLanguage')?.value || s.uiLanguage || 'auto');
     I18N.applyI18n(document, dictLang);
+    updateProviderStatus();
     { const _vEl = $('options-version');
       if (_vEl) _vEl.textContent = 'v' + (browser.runtime.getManifest().version_name || browser.runtime.getManifest().version); }
     // refreshSlotDropdownLabels 在 load() 較早處(line ~273)已跑過一次,但當時
@@ -439,6 +547,7 @@ async function load() {
     }
   }
   refreshLocalModels();
+  if (editingProviderType !== 'local') refreshPresetLocalModelList();
 }
 
 // P2 helper: SK.t shortcut for dynamic strings
@@ -815,8 +924,8 @@ function formatRateLine(rate) {
 function updatePresetModelVisibility(slot) {
   const engine = $(`preset-engine-${slot}`).value;
   const row = $(`preset-model-row-${slot}`);
-  if (row) row.hidden = (engine === 'google' || engine === 'openai-compat');
-  $(`preset-local-row-${slot}`).hidden = engine !== 'openai-compat' || !$('cp-model').hidden;
+  if (row) row.hidden = (engine === 'google' || engine?.startsWith('openai-compat'));
+  $(`preset-local-row-${slot}`).hidden = engine !== 'openai-compat-local';
 }
 
 function refreshLocalPresetModels(ids) {
@@ -825,6 +934,16 @@ function refreshLocalPresetModels(ids) {
     fillModelSelect(select, select.value, ids, _t('options.cp.localInherit'));
     updatePresetModelVisibility(slot);
   }
+}
+
+let presetModelRequest = 0;
+async function refreshPresetLocalModelList() {
+  const token = ++presetModelRequest;
+  const { baseUrl } = providerState.profiles.local;
+  try {
+    const ids = await fetchLocalModels(baseUrl, providerState.keys.local);
+    if (token === presetModelRequest && baseUrl === providerState.profiles.local.baseUrl) refreshLocalPresetModels(ids);
+  } catch { /* Keep saved model choices when the local service is offline. */ }
 }
 
 // 「工具列翻譯本頁按鈕」「自動翻譯網站」兩個下拉選單的 option text
@@ -865,9 +984,7 @@ function updateYtSectionVisibility() {
   // 這裡把 toggle 停用 + 顯示原因,不讓使用者以為勾著就有作用(§UI 語意陷阱)
   const asrToggle = $('ytAsrProgressive');
   const asrGoogleNote = document.getElementById('yt-asr-google-note');
-  const local = engine === 'openai-compat' && isLocalSubtitleProvider({
-    baseUrl: $('cp-baseUrl')?.value, model: $('cp-model')?.value,
-  });
+  const local = engine?.startsWith('openai-compat') && isLocalSubtitleProvider({ ...currentCustomProvider(engine), profileType: engine === 'openai-compat-local' ? 'local' : 'online' });
   if (asrToggle) asrToggle.disabled = engine === 'google' || local;
   const localNote = document.getElementById('yt-asr-local-note');
   if (localNote) localNote.hidden = !local;
@@ -884,8 +1001,9 @@ function updateYtPromptCostHint() {
   let inputPrice = 0;
   let modelDisplay = '';
   const engine = $('ytEngine')?.value || 'gemini';
-  const cpInput = parseFloat($('cp-inputPerMTok').value);
-  const cpModel = ($('cp-model').value || '').trim();
+  const provider = currentCustomProvider(engine);
+  const cpInput = provider.inputPerMTok;
+  const cpModel = provider.model || '';
   const ytModel = $('ytModel').value;
   const ytInput = parseFloat($('ytInputPerMTok').value);
   const mainModel = getSelectedModel();
@@ -893,7 +1011,7 @@ function updateYtPromptCostHint() {
   // 這個 hint 是設定頁字幕 prompt 開銷估算用，翻譯實際計費走獨立路徑（yt.pricing / customProvider / preset modelOverride)，不受影響。
   const mainInput = MODEL_PRICING[mainModel]?.input ?? 0;
 
-  if (engine === 'openai-compat') {
+  if (engine?.startsWith('openai-compat')) {
     // 自訂模型字幕路徑用 customProvider 那組
     inputPrice = isNaN(cpInput) ? 0 : cpInput;
     modelDisplay = cpModel || _t('options.cp.modelDisplayUnset');
@@ -1004,6 +1122,8 @@ async function _saveImpl() {
   // v1.9.16:targetLanguage 已搬到 popup,由 popup 的 change handler 直接寫 storage,
   // options「儲存設定」不寫此欄位避免回灌 stale 值(使用者在 options 開著時於 popup 改 target,
   // 然後在 options 按儲存設定 — 不該把 _currentTargetLang module 變數寫回)。
+  captureProviderProfile();
+  const providerSnapshot = structuredClone(providerState);
   const settings = {
     geminiConfig: {
       model: existingModel,
@@ -1125,9 +1245,9 @@ async function _saveImpl() {
     // 之前只認 'google' / 'gemini' → 使用者改成 'openai-compat' 儲存後被強制 reset。
     translatePresets: [1, 2, 3].map(slot => {
       const raw = $(`preset-engine-${slot}`).value;
-      const engine = (raw === 'google' || raw === 'openai-compat') ? raw : 'gemini';
+      const engine = (raw === 'google' || CUSTOM_ENGINES.includes(raw)) ? raw : 'gemini';
       const model = engine === 'gemini' ? ($(`preset-model-${slot}`).value || null)
-        : engine === 'openai-compat' ? ($(`preset-local-model-${slot}`).value || null) : null;
+        : engine === 'openai-compat-local' ? ($(`preset-local-model-${slot}`).value || null) : null;
       const label = ($(`preset-label-${slot}`).value || '').trim()
         || _t('options.preset.fallbackLabel', { slot });
       return { slot, engine, model, label };
@@ -1210,40 +1330,10 @@ async function _saveImpl() {
     // v1.5.7: 自訂 OpenAI-compatible Provider
     // v1.6.18: 加入 thinkingLevel + extraBodyJson（各家 thinking schema 統一抽象）
     localModelSelectionsSaved: true,
-    customProvider: {
-      baseUrl: ($('cp-baseUrl').value || '').trim(),
-      model: ($('cp-model').value || '').trim(),
-      systemPrompt: $('cp-systemPrompt').value || '',
-      // v1.8.20: temperature 改 parseUserNum 避免 0 被當 falsy；單價 0 是合法值改 parseUserNum 0
-      // v2.0.79:空欄改存 null(= 請求不送 temperature,給只吃自家預設值的 reasoning model
-      // 用,issue #60),不再 fallback 預設 0.7——0.7 讓那些 model 直接 400
-      temperature: (() => {
-        const raw = String($('cp-temperature').value ?? '').trim();
-        if (raw === '') return null;
-        return parseUserNum(raw, DEFAULTS.customProvider?.temperature ?? 0.7);
-      })(),
-      fetchTimeoutSec: parseUserNum($('cp-fetchTimeout').value, DEFAULTS.customProvider?.fetchTimeoutSec ?? 90),
-      // 單價空欄 fallback 0 是刻意 sentinel（空 = 無計價，費用顯示 $0），不引 DEFAULTS 的
-      // OpenRouter 校準單價——清空欄位不該悄悄用別人的價格估費
-      inputPerMTok: parseUserNum($('cp-inputPerMTok').value, 0),
-      outputPerMTok: parseUserNum($('cp-outputPerMTok').value, 0),
-      // v1.9.2: UI 0-100% → 儲存比例 0-1;空白 → null(讓 background 走 baseUrl 自動推導)
-      cachedDiscount: (() => {
-        const raw = $('cp-cachedDiscount')?.value?.trim();
-        if (!raw) return null;
-        const n = Number(raw);
-        if (!Number.isFinite(n) || n < 0 || n > 100) return null;
-        return n / 100;
-      })(),
-      thinkingLevel: (() => {
-        const v = $('cp-thinking-level')?.value;
-        return ['auto', 'off', 'low', 'medium', 'high'].includes(v) ? v : 'auto';
-      })(),
-      extraBodyJson: ($('cp-extra-body-json')?.value || '').trim(),
-      // 強化段序號標記(預設 true)。讀取走 cp.useStrongSegMarker !== false 等同預設開啟,
-      // 對齊舊使用者升級後 undefined 也得到新行為。
-      useStrongSegMarker: $('cp-strong-seg-marker')?.checked !== false,
-    },
+    customProvider: providerConfig(activeProvider(providerSnapshot)),
+    customProviderType: providerSnapshot.activeType,
+    customProviderOnline: providerConfig(providerSnapshot.profiles.online),
+    customProviderLocal: providerConfig(providerSnapshot.profiles.local),
   };
   // 2026-07-09「未客製不物化」：禁用詞表內容等於當前 target 的預設(zh-TW=DEFAULT 26 條 /
   // 其他 target=空表)就不寫 key，並回收既有物化殘留 —— 否則任一 autosave 都會把預設
@@ -1255,8 +1345,10 @@ async function _saveImpl() {
     await browser.storage.sync.remove('forbiddenTerms'); // 舊版殘留
   }
   // v1.5.7: customProvider.apiKey 走 storage.local（與主 apiKey 同樣設計），先抽出再寫 sync
-  const cpApiKeyValue = ($('cp-apiKey').value || '').trim();
-  await browser.storage.local.set({ customProviderApiKey: cpApiKeyValue });
+  await browser.storage.local.set({
+    customProviderApiKeys: { ...providerSnapshot.keys },
+    customProviderApiKey: providerSnapshot.keys[providerSnapshot.activeType] || '',
+  });
   // 固定術語表 / 禁用詞走 local（避開 sync 每 key 8KB 上限，批次 6）；其餘 sync
   const { syncPart, localPart } = splitSettingsPatch(settings);
   if (Object.keys(localPart).length > 0) await browser.storage.local.set(localPart);
@@ -1280,11 +1372,26 @@ $('cp-toggle-apiKey').addEventListener('click', () => {
   }
 });
 
+$('cp-speed-preset').addEventListener('click', () => {
+  const provider = collectProviderForm();
+  const performance = globalThis.__SKProviderPerformance.config({ baseUrl: provider.baseUrl, model: provider.model }, editingProviderType);
+  $('cp-web-concurrency').value = performance.webConcurrency;
+  $('cp-web-units').value = performance.webBatchUnits;
+  $('cp-web-chars').value = performance.webBatchChars;
+  $('cp-thinking-level').value = 'off';
+  $('cp-strong-seg-marker').checked = editingProviderType === 'local';
+  $('cp-routing-sort').value = 'throughput';
+  $('cp-allow-fallbacks').checked = true;
+  markDirty();
+});
+
 // v1.5.7: 自訂模型 API 測試
 $('cp-test-apiKey').addEventListener('click', async () => {
+  const revision = providerEditorRevision;
   await runApiTest({
     btn: $('cp-test-apiKey'),
     resultEl: $('cp-test-apiKey-result'),
+    isCurrent: () => revision === providerEditorRevision,
     sendMessage: () => browser.runtime.sendMessage({
       type: 'TEST_CUSTOM_PROVIDER',
       payload: {
@@ -1378,6 +1485,7 @@ function applyUiLanguageRefresh(dictLang) {
   const I18N = window.__SK?.i18n;
   if (!I18N) return;
   I18N.applyI18n(document, dictLang);
+    updateProviderStatus();
   { const _vEl = $('options-version');
     if (_vEl) _vEl.textContent = 'v' + (browser.runtime.getManifest().version_name || browser.runtime.getManifest().version); }
   // iOS 上架提示 pill 的 storefront 跟著 UI 語系走
@@ -1548,7 +1656,7 @@ for (const id of ['ytModel', 'ytInputPerMTok', 'cp-model', 'cp-inputPerMTok']) {
 }
 
 // v1.8.41:Base URL 改成 http:// 時即時提示 Firefox HTTPS-Only Mode 警告
-$('cp-baseUrl')?.addEventListener('input', refreshFirefoxHttpsWarn);
+$('cp-baseUrl')?.addEventListener('input', () => { $('cp-baseUrl').setCustomValidity(''); refreshFirefoxHttpsWarn(); });
 
 // v1.2.39: 切換 YouTube 模型時自動帶入參考計價（與主模型的邏輯相同）
 $('ytModel').addEventListener('change', () => {
@@ -1596,6 +1704,7 @@ window.addEventListener('pagehide', () => {
   save();
 });
 function markDirty() {
+  updateProviderStatus();
   scheduleAutoSave();
   const bar = $('save-bar');
   // 若目前是「已自動儲存」綠條還在，不立即覆蓋（等它自己消失）
@@ -1613,8 +1722,8 @@ document.getElementById('tab-glossary').addEventListener('change', markDirty);
 document.getElementById('tab-forbidden').addEventListener('input', markDirty);
 document.getElementById('tab-forbidden').addEventListener('change', markDirty);
 // v1.5.7: 自訂 Provider 分頁
-document.getElementById('tab-custom-provider').addEventListener('input', markDirty);
-document.getElementById('tab-custom-provider').addEventListener('change', markDirty);
+$('custom-provider-form').addEventListener('input', markDirty);
+$('custom-provider-form').addEventListener('change', markDirty);
 // v1.2.13: YouTube 字幕分頁也需要 dirty 偵測
 document.getElementById('tab-youtube').addEventListener('input', markDirty);
 document.getElementById('tab-youtube').addEventListener('change', markDirty);
@@ -1691,7 +1800,7 @@ $('toggle-api-key').addEventListener('click', () => {
 });
 
 // v1.5.7: 通用「測試 API」UI helper — 兩個測試按鈕共用 loading / 結果顯示流程
-async function runApiTest({ btn, resultEl, sendMessage }) {
+async function runApiTest({ btn, resultEl, sendMessage, isCurrent = () => true }) {
   btn.disabled = true;
   btn.dataset.state = 'loading';
   btn.textContent = _t('options.action.testing');
@@ -1700,6 +1809,7 @@ async function runApiTest({ btn, resultEl, sendMessage }) {
   resultEl.textContent = _t('options.action.testingConnect');
   try {
     const resp = await sendMessage();
+    if (!isCurrent()) return;
     if (resp?.ok) {
       resultEl.dataset.state = 'ok';
       // 2026-10-07 code review P2-5：成功文案由這裡依 UI 語系組（背景只回 code + params），
@@ -1716,6 +1826,7 @@ async function runApiTest({ btn, resultEl, sendMessage }) {
       resultEl.textContent = '✗ ' + (coded || resp?.message || resp?.error || _t('common.errorUnknown'));
     }
   } catch (err) {
+    if (!isCurrent()) return;
     resultEl.dataset.state = 'fail';
     resultEl.textContent = '✗ ' + (err?.message || String(err));
   } finally {
@@ -2280,6 +2391,9 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     const panel = $('tab-' + btn.dataset.tab);
     if (panel) panel.classList.add('active');
+    if (btn.dataset.tab === 'custom-provider' || btn.dataset.tab === 'custom-local') {
+      showProviderProfile(btn.dataset.tab === 'custom-local' ? 'local' : 'online');
+    }
     // 切到用量頁時載入資料
     if (btn.dataset.tab === 'usage') {
       // v1.8.40: 自動把「到」時間 bump 到當下，確保涵蓋切 tab 之前剛翻譯完的紀錄。
@@ -2338,7 +2452,7 @@ function modelToLabel(modelId, engine) {
   // 會讓所有 customProvider 紀錄(包含換 model 前後)看起來相同,filter dropdown 兩個選項看起來
   // 一樣;path 最後一段保留可區分性又不會撐爆欄位寬度。
   const looksLikeGemini = modelId.startsWith('gemini-');
-  const isCustom = engine === 'openai-compat' || (!engine && !looksLikeGemini);
+  const isCustom = engine?.startsWith('openai-compat') || (!engine && !looksLikeGemini);
   if (isCustom) {
     const last = modelId.split('/').pop();
     return last || modelId;
@@ -3169,7 +3283,13 @@ const refreshLocalModels = bindLocalModelPicker({
   baseUrl: $('cp-baseUrl'), input: $('cp-model'), select: $('cp-local-model'),
   refresh: $('cp-refresh-models'), clear: $('cp-clear-model'), status: $('cp-local-model-status'),
   hint: $('cp-model-hint'), apiKey: $('cp-apiKey'), t: _t,
-  onModels: refreshLocalPresetModels,
+  getProviderType: () => editingProviderType,
+  onModels: ids => {
+    if (editingProviderType === 'local') {
+      presetModelRequest++;
+      refreshLocalPresetModels(ids);
+    }
+  },
 });
 document.querySelectorAll('.preset-local-clear').forEach(button => {
   button.addEventListener('click', () => {

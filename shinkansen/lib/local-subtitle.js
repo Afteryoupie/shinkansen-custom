@@ -1,5 +1,7 @@
 // 本地模型字幕：序列化推論，避免 Apple / 單模型端點同時收到多個影片批次。
 export function isLocalSubtitleProvider(provider) {
+  if (provider?.profileType === 'local') return true;
+  if (provider?.profileType === 'online') return false;
   try {
     return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(provider?.baseUrl || '').hostname) ||
       /apple|foundation.?models/i.test(provider?.model || '');

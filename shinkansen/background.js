@@ -10,6 +10,7 @@ import { runSubtitleDecisionPipeline, runAsrDecisionPipeline, subtitleRepairProm
 import { isLocalSubtitleProvider, queueLocalSubtitle, localSubtitlePrompt } from './lib/local-subtitle.js';
 import { IS_IOS_BUILD } from './lib/distribution.js'; // Phase 2: host app 設定橋接只在 iOS build 走 native messaging
 import { translateBatch, extractGlossary, extractTermRenderings, translateBatchStream, summarizeArticle } from './lib/gemini.js';
+import { providerSettings } from './lib/custom-provider-profiles.js';
 import { translateBatch as translateBatchCustom, extractGlossary as extractGlossaryCustom } from './lib/openai-compat.js'; // v1.5.7
 import { ensureLocalLlamaServer } from './custom/local-llama.js';
 import { translateGoogleBatch } from './lib/google-translate.js';
@@ -958,7 +959,7 @@ const messageHandlers = {
   TRANSLATE_DOC_BATCH_CUSTOM: {
     async: true,
     handler: async (payload, sender) => {
-      const s = await getSettingsCached();
+      const s = providerSettings(await getSettingsCached(), payload?.engine);
       const td = s.translateDoc || {};
       const userPrompt = getEffectiveDocSystemPrompt(s.targetLanguage, td.systemPrompt);
       // 本文件額外翻譯指令：同 TRANSLATE_DOC_BATCH 的附加位置與 cache key 規則
@@ -967,6 +968,7 @@ const messageHandlers = {
         + (extraPrompt ? '\n\n' + extraPrompt : '')
         + DOC_INLINE_MARKER_INSTRUCTION;
       const overrides = { systemPrompt: effectivePrompt };
+      if (payload?.modelOverride) overrides.model = payload.modelOverride;
       // v2.0.53:同 TRANSLATE_DOC_BATCH 的批次逾時放寬。openai-compat 走秒制
       // fetchTimeoutSec;使用者在自訂模型設定填了更大的值就尊重使用者
       const userTimeoutSec = s.customProvider?.fetchTimeoutSec;
@@ -1004,7 +1006,8 @@ const messageHandlers = {
   TRANSLATE_SUBTITLE_BATCH_CUSTOM: {
     async: true,
     handler: async (payload, sender) => {
-      const s = await getSettingsCached();
+      const saved = await getSettingsCached();
+      const s = providerSettings(saved, payload?.engine || saved.ytSubtitle?.engine);
       const yt = s.ytSubtitle || {};
       // 2026-09-11 code review P1-2：原本把 yt.systemPrompt 原字串當 override 直接塞——
       // getSettings 對 ytSubtitle 深 merge，這個值永遠是非空的預設繁中字幕 prompt，
@@ -1033,7 +1036,8 @@ const messageHandlers = {
   TRANSLATE_ASR_SUBTITLE_BATCH_CUSTOM: {
     async: true,
     handler: async (payload, sender) => {
-      const s = await getSettingsCached();
+      const saved = await getSettingsCached();
+      const s = providerSettings(saved, payload?.engine || saved.ytSubtitle?.engine);
       const yt = s.ytSubtitle || {};
       const overrides = {
         // P1: 自訂 Provider ASR 路徑同 Gemini ASR,依 target 切 universal/zh-TW prompt
@@ -1052,7 +1056,8 @@ const messageHandlers = {
   TRANSLATE_DRIVE_ASR_SUBTITLE_BATCH_CUSTOM: {
     async: true,
     handler: async (payload, sender) => {
-      const s = await getSettingsCached();
+      const saved = await getSettingsCached();
+      const s = providerSettings(saved, payload?.engine || saved.ytSubtitle?.engine);
       const yt = s.ytSubtitle || {};
       const overrides = {
         systemPrompt: getEffectiveAsrSubtitleSystemPrompt(s.targetLanguage, payload?.sourceLanguage || 'en'),
@@ -1294,13 +1299,13 @@ const messageHandlers = {
     handler: async (payload) => {
       // v1.8.14: 改用 getSettingsCached——YouTube 一支影片上百筆 LOG_USAGE,
       // 每筆原本都重讀整份 settings 只為了取 model 名稱。
-      const settings = await getSettingsCached();
+      const settings = providerSettings(await getSettingsCached(), payload?.engine);
       // v1.5.7: 依 payload.engine 決定 model 該從哪裡取——這樣 Alt+A/S 切不同 preset
       // 寫入紀錄的 model 才會是該批 API 真實使用的模型。
       // - 'openai-compat'：自訂模型，model 從 settings.customProvider.model
       // - 其他（gemini）：優先 payload.model（preset modelOverride），否則 fallback 全域
       let resolvedModel;
-      if (payload.engine === 'openai-compat') {
+      if (payload.engine?.startsWith('openai-compat')) {
         // v1.8.41:llama.cpp / Ollama 等本機 server 啟動時鎖 model，使用者可不填 model 欄位。
         // 此時 server 用 startup-loaded model,Shinkansen 用 '<server-default>' 佔位
         // （避免空字串污染 model filter / chart group)。
@@ -2006,7 +2011,9 @@ async function testCustomProvider(payload) {
 // 用 _oc base tag + baseUrl hash + safe model 分區，計價來自 customProvider 自填。
 // 與 Gemini 共用：fixedGlossary、forbiddenTerms、自動 glossary 注入、cache module。
 async function handleTranslateCustom(payload, sender, cacheTag = '_oc', cpOverrides = null, applyFixedGlossary = true, applyForbiddenTerms = true, keyExtras = {}) {
-  const settings = await getSettingsCached();
+  const savedSettings = await getSettingsCached();
+  const engine = payload?.engine || (cacheTag.includes('_yt') ? savedSettings.ytSubtitle?.engine : null);
+  const settings = providerSettings(savedSettings, engine);
   // v1.5.8: cpOverrides 給字幕路徑覆蓋特定欄位（例如 systemPrompt 改用字幕專屬），
   // 其他欄位（baseUrl / model / apiKey / 計價）仍走「自訂模型」分頁主設定。
   const cp = { ...(settings.customProvider || {}), ...(cpOverrides || {}) };
@@ -2030,6 +2037,11 @@ async function handleTranslateCustom(payload, sender, cacheTag = '_oc', cpOverri
   // P1 (v1.8.59):adapter 內部讀 settings.customProvider.systemPrompt，把已 wrap 過 effective
   // prompt 的 cp 寫回 settings.customProvider 才能讓 LLM 端拿到對的 prompt。
   const effSettings = { ...settings, customProvider: cp };
+  if (cacheTag === '_oc') {
+    const performance = globalThis.__SKProviderPerformance.config(cp, cp.profileType || 'online');
+    effSettings.maxUnitsPerBatch = performance.webBatchUnits;
+    effSettings.maxCharsPerBatch = performance.webBatchChars;
+  }
   // v2.0.11：文件翻譯每批段數（同 handleTranslate，openai-compat packChunks 讀 settings.maxUnitsPerBatch）
   if (Number.isInteger(payload.docBatchSize) && payload.docBatchSize >= 1 && payload.docBatchSize <= 100) {
     effSettings.maxUnitsPerBatch = payload.docBatchSize;
@@ -2040,7 +2052,7 @@ async function handleTranslateCustom(payload, sender, cacheTag = '_oc', cpOverri
   // thinking / extraBody）與 cacheTag（'_oc' 網頁 / '_oc_yt' 字幕 / '_oc_doc' 文件）
   return pipeline.runTranslatePipeline({
     payload, sender, settings, cacheTag, applyFixedGlossary, applyForbiddenTerms,
-    engine: 'openai-compat',
+    engine: engine || 'openai-compat',
     // 本機 server 不填 model 用 '<server-default>' 佔位（同 LOG_USAGE handler）
     modelLabel: cp.model || '<server-default>',
     pricing: customProviderPricing(cp),
@@ -2281,7 +2293,7 @@ async function handleExtractGlossaryCustomProvider(payload, sender) {
   debugLog('info', 'glossary', 'openai-compat glossary extraction start', {
     inputHash: payload.inputHash, chars: payload.compressedText?.length,
   });
-  const settings = await getSettingsCached();
+  const settings = providerSettings(await getSettingsCached(), payload?.engine);
   const cp = { ...(settings.customProvider || {}), ...(payload.modelOverride ? { model: payload.modelOverride } : {}) };
   if (!cp.baseUrl) {
     return { glossary: [], usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 }, _diag: '尚未設定自訂 Provider 的 Base URL。' };

@@ -15,6 +15,7 @@
 //   options 頁預設拿 window.__SKShortcuts，node 端 spec 用 createRequire 傳入
 // @returns {{ clean: object, warnings: string[] }}
 import { TARGET_LANGUAGES, UI_LANGUAGES } from '../lib/storage.js';
+import { providerConfig, PROVIDER_TYPES, inferProviderType, CUSTOM_ENGINES } from '../lib/custom-provider-profiles.js';
 
 export function sanitizeImport(raw, _t, SC = globalThis.__SKShortcuts) {
   const clean = {};
@@ -199,42 +200,13 @@ export function sanitizeImport(raw, _t, SC = globalThis.__SKShortcuts) {
     }
   }
 
-  // v1.5.7: customProvider 子物件（apiKey 不在匯入範圍——同 Gemini apiKey 設計）
-  if (raw.customProvider && typeof raw.customProvider === 'object') {
-    const cp = raw.customProvider;
-    const cpClean = {};
-    if (typeof cp.baseUrl === 'string') cpClean.baseUrl = cp.baseUrl.trim();
-    if (typeof cp.model === 'string') cpClean.model = cp.model.trim();
-    if (typeof cp.systemPrompt === 'string') cpClean.systemPrompt = cp.systemPrompt;
-    // v2.0.79：null = 匯出時使用者留空（請求不送 temperature），照原樣收下
-    if (cp.temperature === null) cpClean.temperature = null;
-    else if (typeof cp.temperature === 'number' && cp.temperature >= 0 && cp.temperature <= 2) {
-      cpClean.temperature = cp.temperature;
-    }
-    if (typeof cp.fetchTimeoutSec === 'number' && cp.fetchTimeoutSec >= 5 && cp.fetchTimeoutSec <= 600) cpClean.fetchTimeoutSec = cp.fetchTimeoutSec;
-    if (typeof cp.inputPerMTok === 'number' && cp.inputPerMTok >= 0) cpClean.inputPerMTok = cp.inputPerMTok;
-    if (typeof cp.outputPerMTok === 'number' && cp.outputPerMTok >= 0) cpClean.outputPerMTok = cp.outputPerMTok;
-    // v1.9.2: cachedDiscount 0-1,null 表示走 baseUrl 自動推導
-    if (cp.cachedDiscount === null) cpClean.cachedDiscount = null;
-    else if (typeof cp.cachedDiscount === 'number'
-        && Number.isFinite(cp.cachedDiscount)
-        && cp.cachedDiscount >= 0 && cp.cachedDiscount <= 1) {
-      cpClean.cachedDiscount = cp.cachedDiscount;
-    }
-    // thinkingLevel:enum，非法值落回 'auto'(對齊 saveSettings 的 fallback)
-    if (typeof cp.thinkingLevel === 'string'
-        && ['auto', 'off', 'low', 'medium', 'high'].includes(cp.thinkingLevel)) {
-      cpClean.thinkingLevel = cp.thinkingLevel;
-    }
-    // extraBodyJson：自由字串（save 端只 trim，不在此驗 JSON 合法性，維持與 saveSettings 一致）
-    if (typeof cp.extraBodyJson === 'string') cpClean.extraBodyJson = cp.extraBodyJson.trim();
-    // useStrongSegMarker:boolean(預設 true，讀取走 !== false)
-    if (typeof cp.useStrongSegMarker === 'boolean') cpClean.useStrongSegMarker = cp.useStrongSegMarker;
-    if (Object.prototype.hasOwnProperty.call(cp, 'apiKey')) {
-      warnings.push(_t('options.import.warningCpApiKey'));
-    }
-    if (Object.keys(cpClean).length > 0) clean.customProvider = cpClean;
+  for (const key of ['customProvider', 'customProviderOnline', 'customProviderLocal']) {
+    if (!raw[key] || typeof raw[key] !== 'object' || Array.isArray(raw[key])) continue;
+    const config = providerConfig(raw[key]);
+    if (Object.keys(config).length) clean[key] = config;
+    if (Object.prototype.hasOwnProperty.call(raw[key], 'apiKey')) warnings.push(_t('options.import.warningCpApiKey'));
   }
+  if (PROVIDER_TYPES.includes(raw.customProviderType)) clean.customProviderType = raw.customProviderType;
 
   // domainRules 子物件
   if (raw.domainRules && typeof raw.domainRules === 'object') {
@@ -292,7 +264,7 @@ export function sanitizeImport(raw, _t, SC = globalThis.__SKShortcuts) {
     for (const p of raw.translatePresets) {
       if (!p || typeof p !== 'object') continue;
       if (![1, 2, 3].includes(p.slot)) continue;
-      const engine = ['gemini', 'google', 'openai-compat'].includes(p.engine) ? p.engine : 'gemini';
+      const engine = ['gemini', 'google', ...CUSTOM_ENGINES].includes(p.engine) ? p.engine : 'gemini';
       // model 對 gemini 是字串（空 = inherit 全域），google/openai-compat 預期 null
       let model = null;
       if (typeof p.model === 'string') model = p.model;
@@ -315,7 +287,7 @@ export function sanitizeImport(raw, _t, SC = globalThis.__SKShortcuts) {
       lookaheadS:          { type: 'number', min: 3, max: 30 },
       debugToast:          { type: 'boolean' },
       onTheFly:            { type: 'boolean' },
-      engine:              { type: 'string', oneOf: ['gemini', 'google', 'openai-compat'] },
+      engine:              { type: 'string', oneOf: ['gemini', 'google', ...CUSTOM_ENGINES] },
       model:               { type: 'string' }, // 空字串 = 與主模型相同
       applyFixedGlossary:  { type: 'boolean' },
       applyForbiddenTerms: { type: 'boolean' },
@@ -378,5 +350,11 @@ export function sanitizeImport(raw, _t, SC = globalThis.__SKShortcuts) {
     }
   }
 
+  // Importing a legacy backup must replace the matching profile, even after upgrade.
+  if (clean.customProvider && !clean.customProviderOnline && !clean.customProviderLocal) {
+    const type = clean.customProviderType || inferProviderType(clean.customProvider.baseUrl);
+    clean.customProviderType = type;
+    clean[type === 'online' ? 'customProviderOnline' : 'customProviderLocal'] = { ...clean.customProvider };
+  }
   return { clean, warnings };
 }

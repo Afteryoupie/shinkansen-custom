@@ -77,8 +77,8 @@
       respond({ ok: true, triggered: true, engine: eng });
       if (eng === 'google') {
         SK.translatePageGoogle({ label: 'Google MT (debug bridge)' });
-      } else if (eng === 'openai-compat') {
-        SK.translatePage({ engine: 'openai-compat', label: 'OpenAI-compat (debug bridge)' });
+      } else if (eng?.startsWith('openai-compat')) {
+        SK.translatePage({ engine: eng, label: 'OpenAI-compat (debug bridge)' });
       } else {
         SK.translatePage();
       }
@@ -707,10 +707,12 @@
     let maxConcurrent = SK.DEFAULT_MAX_CONCURRENT;
     let maxUnitsPerBatch = SK.DEFAULT_UNITS_PER_BATCH;
     let maxCharsPerBatch = SK.DEFAULT_CHARS_PER_BATCH;
+    let providerPerformance = null;
     // v1.8.3: partialMode（只翻文章開頭，節省費用）
     let partialMode = { enabled: false, maxUnits: 25 };
     try {
-      const batchCfg = await browser.storage.sync.get(['maxConcurrentBatches', 'maxUnitsPerBatch', 'maxCharsPerBatch', 'partialMode']);
+      const batchCfg = await browser.storage.sync.get(['maxConcurrentBatches', 'maxUnitsPerBatch', 'maxCharsPerBatch', 'partialMode',
+        'customProvider', 'customProviderOnline', 'customProviderLocal', 'customProviderType']);
       if (Number.isFinite(batchCfg.maxConcurrentBatches) && batchCfg.maxConcurrentBatches > 0) {
         maxConcurrent = batchCfg.maxConcurrentBatches;
       }
@@ -719,6 +721,16 @@
       }
       if (Number.isFinite(batchCfg.maxCharsPerBatch) && batchCfg.maxCharsPerBatch >= 500) {
         maxCharsPerBatch = batchCfg.maxCharsPerBatch;
+      }
+      if (engine?.startsWith('openai-compat')) {
+        const type = engine === 'openai-compat-local' ? 'local' : engine === 'openai-compat-online' ? 'online' :
+          batchCfg.customProviderType || globalThis.__SKProviderPerformance.inferType(batchCfg.customProvider?.baseUrl);
+        const legacy = globalThis.__SKProviderPerformance.inferType(batchCfg.customProvider?.baseUrl) === type ? batchCfg.customProvider : null;
+        const profile = batchCfg[type === 'local' ? 'customProviderLocal' : 'customProviderOnline'] || legacy || {};
+        providerPerformance = globalThis.__SKProviderPerformance.config(profile, type);
+        maxConcurrent = providerPerformance.webConcurrency;
+        maxUnitsPerBatch = providerPerformance.webBatchUnits;
+        maxCharsPerBatch = providerPerformance.webBatchChars;
       }
       if (batchCfg.partialMode && typeof batchCfg.partialMode === 'object') {
         if (typeof batchCfg.partialMode.enabled === 'boolean') partialMode.enabled = batchCfg.partialMode.enabled;
@@ -745,10 +757,11 @@
     // v1.8.3: partialMode 啟用時，第一批 limit 用使用者設定的 maxUnits;chars 仍用 BATCH0_CHARS 內部限制
     // v1.8.8: ignorePartialMode 路徑（「翻譯剩餘段落」按鈕）走全頁翻譯，batch 0 用標準 BATCH0_UNITS
     const partialModeActive = partialMode.enabled && !ignorePartialMode;
-    const firstBatchUnits = partialModeActive ? partialMode.maxUnits : SK.BATCH0_UNITS;
+    const firstBatchUnits = partialModeActive ? partialMode.maxUnits : providerPerformance?.firstBatchUnits || SK.BATCH0_UNITS;
     // v1.8.39: packBatches 收 deduped 版本（不含重複 text)，減少 batch 數與 API token
     // 簡繁分流後只包 LLM 側段落;本地轉換組另走 runZhConvert(不進 packBatches)
-    const jobs = packBatches(llmTexts, llmUnits, llmSlots, maxUnitsPerBatch, maxCharsPerBatch, firstBatchUnits, SK.BATCH0_CHARS);
+    const firstBatchChars = providerPerformance?.firstBatchChars || SK.BATCH0_CHARS;
+    const jobs = packBatches(llmTexts, llmUnits, llmSlots, maxUnitsPerBatch, maxCharsPerBatch, firstBatchUnits, firstBatchChars);
     SK.sendLog('info', 'translate', 'milestone:tu_packed', { t: Date.now() - tu_entry, batches: jobs.length });
     // v1.8.8 instrumentation: packBatches 詳情（每批 unit 數 / chars)
     // v1.8.39: log 欄位改名強調「上限 vs 實際」差異——歷史命名 `firstBatchUnits` 容易被誤讀成
@@ -762,7 +775,7 @@
       batchSizes: jobs.map((j, i) => ({ idx: i, units: j.texts.length, chars: j.chars })),
       partialMode,
       firstBatchUnitLimit: firstBatchUnits,
-      firstBatchCharLimit: SK.BATCH0_CHARS,
+      firstBatchCharLimit: firstBatchChars,
       firstBatchActualUnits: jobs[0]?.texts.length || 0,
       firstBatchActualChars: jobs[0]?.chars || 0,
     });
@@ -780,12 +793,12 @@
       try {
         // v1.5.7: engine='openai-compat' 時走 TRANSLATE_BATCH_CUSTOM 走 lib/openai-compat.js；
         // 預設 'gemini' 維持既有 TRANSLATE_BATCH 行為。
-        const messageType = engine === 'openai-compat' ? 'TRANSLATE_BATCH_CUSTOM' : 'TRANSLATE_BATCH';
+        const messageType = engine?.startsWith('openai-compat') ? 'TRANSLATE_BATCH_CUSTOM' : 'TRANSLATE_BATCH';
         const response = await sendMessageWithTimeout({
           type: messageType,
           // v1.4.12: modelOverride 來自 preset 快速鍵，覆蓋全域 geminiConfig.model（僅 Gemini 路徑生效，
           // OpenAI-compat 路徑以 customProvider 整組為準）
-          payload: { texts: job.texts, glossary: glossary || null, modelOverride: modelOverride || null },
+          payload: { texts: job.texts, glossary: glossary || null, modelOverride: modelOverride || null, engine },
         }, BATCH_TIMEOUT_MS);
         const elapsed = Date.now() - t0;
         const cacheHit = response?.usage?.cacheHits || 0;
@@ -1174,7 +1187,7 @@
     }
 
     // v1.8.0: streaming 適用範圍——僅 Gemini 文章翻譯路徑。OpenAI-compat / 其他 engine 仍走 v1.7.x 序列 batch 0 路徑。
-    const useStreaming = engine !== 'openai-compat';
+    const useStreaming = !engine?.startsWith('openai-compat');
 
     if (jobs.length > 0) {
       let batch0NeedsFallback = false;
@@ -1188,7 +1201,11 @@
         SK.sendLog('info', 'translate', 'partialMode: skip batch 1+', { totalBatches: jobs.length, skipped: jobs.length - 1, batch0Units: jobs[0].texts.length });
       }
 
-      if (useStreaming) {
+      if (!useStreaming && providerPerformance) {
+        // Start custom batches together, including the small first batch. Local
+        // single-slot services use one worker; online/free limits come from the profile.
+        await runWithConcurrency(skipBatch1Plus ? jobs.slice(0, 1) : jobs, maxConcurrent, runBatch, signal);
+      } else if (useStreaming) {
         const stream = runBatch0Streaming(jobs[0]);
         const r = await stream.firstChunkOrTimeout;
         SK.sendLog('info', 'translate', 'stream firstChunkOrTimeout result', { kind: r.kind, t: Date.now() - tu_entry });
@@ -1662,7 +1679,7 @@
           const glossaryResult = await Promise.race([
             SK.safeSendMessage({
               type: _glossaryMsgType,
-              payload: { compressedText, inputHash, modelOverride: options.engine === 'openai-compat' ? options.modelOverride || null : null },
+              payload: { compressedText, inputHash, engine: options.engine, modelOverride: options.engine?.startsWith('openai-compat') ? options.modelOverride || null : null },
             }),
             new Promise((_, reject) =>
               setTimeout(() => reject(new Error('術語表逾時')), glossaryTimeout)
@@ -1686,7 +1703,7 @@
         SK.showToast('loading', SK.t('toast.glossaryBuilding'), { progress: 0, startTimer: true });
         const glossaryPromise = SK.safeSendMessage({
           type: _glossaryMsgType,
-          payload: { compressedText, inputHash, modelOverride: options.engine === 'openai-compat' ? options.modelOverride || null : null },
+          payload: { compressedText, inputHash, engine: options.engine, modelOverride: options.engine?.startsWith('openai-compat') ? options.modelOverride || null : null },
         }).then(res => {
           if (res?.ok && res.glossary?.length > 0) {
             SK.sendLog('info', 'glossary', 'glossary arrived (async)', { terms: res.glossary.length });
@@ -1810,7 +1827,7 @@
         STATE.translationContext = { provider: 'opencc-local', convertDirection };
       } else {
         // openai-compat 視為獨立 provider 記錄,避免 rescan / SPA nav 把它誤當 Gemini replay。
-        const _providerUsed = options.engine === 'openai-compat' ? 'openai-compat' : 'gemini';
+        const _providerUsed = options.engine?.startsWith('openai-compat') ? options.engine : 'gemini';
         STATE.translatedBy = _providerUsed;  // v1.4.0
         // 把本次翻譯參數記下供 SPA observer rescan / 延遲 rescan / SPA nav replay 重放同引擎+模型+術語表。
         STATE.translationContext = {
@@ -2946,8 +2963,8 @@
     }
     if (preset.engine === 'google') {
       SK.translatePageGoogle({ slot, label: preset.label || null, overConverted });
-    } else if (preset.engine === 'openai-compat') {
-      SK.translatePage({ engine: 'openai-compat', modelOverride: preset.model || null, slot, label: preset.label || null, overConverted });
+    } else if (preset.engine?.startsWith('openai-compat')) {
+      SK.translatePage({ engine: preset.engine, modelOverride: preset.model || null, slot, label: preset.label || null, overConverted });
     } else {
       SK.translatePage({ modelOverride: preset.model || null, slot, label: preset.label || null, overConverted });
     }

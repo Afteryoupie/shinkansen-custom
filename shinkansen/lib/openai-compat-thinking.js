@@ -1,3 +1,5 @@
+import './provider-performance.js';
+
 // openai-compat-thinking.js — v1.6.18
 // 自訂模型(OpenAI 相容端點)的 thinking 控制 mapping
 //
@@ -44,7 +46,7 @@ export function detectProvider(baseUrl, model) {
   const url = String(baseUrl || '').toLowerCase();
   const m = String(model || '').toLowerCase();
 
-  if (/openrouter\.ai/.test(url)) return 'openrouter';
+  if (globalThis.__SKProviderPerformance.isOpenRouter(baseUrl)) return 'openrouter';
   if (/api\.deepseek\.com/.test(url)) return 'deepseek';
   if (/api\.anthropic\.com|claude/.test(url)) return 'claude';
   if (/api\.x\.ai/.test(url)) return 'grok';
@@ -60,7 +62,7 @@ export function detectProvider(baseUrl, model) {
  * 設計重點:
  *   - 'auto' 永遠回 {}(不干涉,讓 provider 自選預設)
  *   - 各 provider 的 'off' 寫法不同:
- *     OpenRouter 沒真 disable,只能 exclude(內部 reason 但不回 token)
+ *     OpenRouter 用 enabled:false 停用；exclude 只控制回應是否包含思考內容
  *     DeepSeek thinking.type='disabled'
  *     Claude thinking.type='disabled'
  *     OpenAI o-series 沒 disable,最低用 'minimal'
@@ -73,7 +75,7 @@ export function buildNativeThinking(provider, level) {
 
   switch (provider) {
     case 'openrouter':
-      if (level === 'off') return { reasoning: { exclude: true } };
+      if (level === 'off') return { reasoning: { enabled: false, exclude: true } };
       return { reasoning: { effort: level } };
 
     case 'deepseek':
@@ -159,9 +161,13 @@ function isPlainObject(v) {
  * @param {Function} [opts.onWarn] - JSON 解析失敗時的 callback,接 message 字串
  * @returns {object} 可直接 spread 進 request body 的物件
  */
-export function buildThinkingPayload({ baseUrl, model, level, extraBodyRaw, onWarn }) {
+export function buildThinkingPayload({ baseUrl, model, level, extraBodyRaw, onWarn, routingSort = 'throughput', allowFallbacks = true }) {
   const provider = detectProvider(baseUrl, model);
   const native = buildNativeThinking(provider, level);
+  if (provider === 'openrouter') {
+    native.provider = { allow_fallbacks: allowFallbacks !== false };
+    if (['throughput', 'latency', 'price'].includes(routingSort)) native.provider.sort = routingSort;
+  }
   const extra = safeParseJson(extraBodyRaw, onWarn);
   return deepMerge(native, extra);
 }

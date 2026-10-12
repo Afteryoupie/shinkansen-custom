@@ -24,7 +24,8 @@
       <button class="tab-btn active" data-tab="settings" data-i18n="options.tab.settings">一般設定</button>
       <button class="tab-btn" data-tab="youtube" data-i18n="options.tab.youtube">YouTube 字幕</button>
       <button class="tab-btn" data-tab="gemini" data-i18n="options.tab.gemini">Gemini</button>
-      <button class="tab-btn" data-tab="custom-provider" data-i18n="options.tab.customProvider">自訂模型</button>
+      <button class="tab-btn" data-tab="custom-provider" data-i18n="options.tab.customOnline">線上自訂模型</button>
+      <button class="tab-btn" data-tab="custom-local" data-i18n="options.tab.customLocal">本地自訂模型</button>
       <button class="tab-btn" data-tab="glossary" data-i18n="options.tab.glossary">術語表</button>
       <button class="tab-btn" data-tab="forbidden" data-i18n="options.tab.forbidden">禁用詞清單</button>
       <button class="tab-btn" data-tab="usage" data-i18n="options.tab.usage">用量紀錄</button>
@@ -177,7 +178,8 @@
             <select id="preset-engine-2">
               <option value="gemini" data-i18n="options.preset.engineGemini">Gemini（AI 翻譯）</option>
               <option value="google" data-i18n="options.preset.engineGoogle">Google Translate（免費機器翻譯）</option>
-              <option value="openai-compat" data-i18n="options.preset.engineCustom">自訂模型</option>
+              <option value="openai-compat-online" data-i18n="options.tab.customOnline">線上自訂模型</option>
+              <option value="openai-compat-local" data-i18n="options.tab.customLocal">本地自訂模型</option>
             </select>
           </label>
           <label class="preset-model-label" id="preset-local-row-2" hidden>
@@ -213,7 +215,8 @@
             <select id="preset-engine-1">
               <option value="gemini" data-i18n="options.preset.engineGemini">Gemini（AI 翻譯）</option>
               <option value="google" data-i18n="options.preset.engineGoogle">Google Translate（免費機器翻譯）</option>
-              <option value="openai-compat" data-i18n="options.preset.engineCustom">自訂模型</option>
+              <option value="openai-compat-online" data-i18n="options.tab.customOnline">線上自訂模型</option>
+              <option value="openai-compat-local" data-i18n="options.tab.customLocal">本地自訂模型</option>
             </select>
           </label>
           <label class="preset-model-label" id="preset-local-row-1" hidden>
@@ -249,7 +252,8 @@
             <select id="preset-engine-3">
               <option value="gemini" data-i18n="options.preset.engineGemini">Gemini（AI 翻譯）</option>
               <option value="google" data-i18n="options.preset.engineGoogle">Google Translate（免費機器翻譯）</option>
-              <option value="openai-compat" data-i18n="options.preset.engineCustom">自訂模型</option>
+              <option value="openai-compat-online" data-i18n="options.tab.customOnline">線上自訂模型</option>
+              <option value="openai-compat-local" data-i18n="options.tab.customLocal">本地自訂模型</option>
             </select>
           </label>
           <label class="preset-model-label" id="preset-local-row-3" hidden>
@@ -770,32 +774,29 @@
 
     <!-- ═══ 自訂 Provider 分頁（v1.5.7 新增） ═══ -->
     <div id="tab-custom-provider" class="tab-panel">
+    <div id="custom-provider-form">
+    <section class="provider-status-card">
+      <h2 id="cp-profile-heading"></h2>
+      <p id="cp-profile-description" class="muted"></p>
+      <small class="muted" data-i18n="options.cp.profileScope">切換後，網頁、字幕及文件的「自訂模型」翻譯使用此設定。瀏覽分頁不會切換翻譯來源。</small>
+    </section>
 
     <section>
-      <h2 data-i18n="options.cp.heading">自訂 OpenAI 相容模型</h2>
-      <p class="muted" data-i18n="options.cp.intro1">
-        想用 Gemini 之外的模型？設定一組 OpenAI 相容端點即可接
-        OpenRouter（含 Anthropic / Gemini / Llama / Qwen / Grok 等百種模型）、
-        Ollama 本機、Together、Groq、Fireworks、OpenAI 自家等
-      </p>
+      <h2 data-i18n="options.cp.connection">連線與模型</h2>
       <p class="muted" data-i18n="options.cp.intro2">
         設定完成後，到「一般設定」分頁的「翻譯快速鍵」，把任一組預設引擎改為「自訂模型」，即可使用快速鍵啟動翻譯
       </p>
       <label>
         <span data-i18n="options.cp.baseUrlLabel">Base URL</span>
         <input type="text" id="cp-baseUrl" data-i18n-attr-placeholder="options.cp.baseUrlPlaceholder" placeholder="例如：https://openrouter.ai/api/v1">
-        <small class="muted" data-i18n-html="options.cp.baseUrlHint.html">
-          OpenAI 相容模型端點的根目錄。系統會自動接 <code>/chat/completions</code>。
-          常見：<code>https://openrouter.ai/api/v1</code>、<code>https://api.together.xyz/v1</code>、
-          <code>http://localhost:11434/v1</code>（Ollama）
-        </small>
+        <small id="cp-baseurl-hint" class="muted"></small>
         <small id="cp-baseurl-firefox-warn" class="muted firefox-https-warn" hidden data-i18n-html="options.cp.firefoxHttpsWarn.html">
           ⚠ <strong>Firefox 使用者注意</strong>：Firefox 的 HTTPS-Only Mode 會把 <code>http://</code> 請求強制升級成 <code>https://</code>，
           導致連本機 server 失敗。請到 <code>about:preferences#privacy</code> 滑到「HTTPS-Only Mode」改為「Don't enable」，
           或對該網址加入例外
         </small>
       </label>
-      <details class="advanced-details" style="margin-top: 4px; margin-bottom: 12px;">
+      <details id="cp-local-help" class="advanced-details" style="margin-top: 4px; margin-bottom: 12px;">
         <summary data-i18n="options.cp.cors.summary">連本機 Ollama / llama.cpp 收到 403？（展開查看解法）</summary>
         <div style="margin-top: 8px; font-size: 13px;">
           <p class="muted" style="margin: 0 0 8px;" data-i18n-html="options.cp.cors.line1.html">
@@ -917,6 +918,44 @@
       </details>
     </section>
 
+    <section id="cp-web-performance">
+      <h2 data-i18n="options.cp.speed.heading">網頁翻譯效能</h2>
+      <p id="cp-speed-hint" class="muted"></p>
+      <button type="button" id="cp-speed-preset" class="secondary" data-i18n="options.cp.speed.apply">套用建議加速設定</button>
+      <label>
+        <span data-i18n="options.gemini.perf.maxConcurrentLabel">同時並發批次上限</span>
+        <input type="number" id="cp-web-concurrency" min="1" max="50" step="1">
+      </label>
+      <label>
+        <span data-i18n="options.gemini.perf.maxUnitsLabel">每批段數上限</span>
+        <input type="number" id="cp-web-units" min="1" max="100" step="1">
+      </label>
+      <label>
+        <span data-i18n="options.gemini.perf.maxCharsLabel">每批字元預算</span>
+        <input type="number" id="cp-web-chars" min="500" max="20000" step="500">
+      </label>
+      <small class="muted" data-i18n="options.cp.speed.batchHint">首批會自動縮小，優先顯示前面段落；後續依上述大小分批。並發不是每分鐘請求配額。</small>
+      <div id="cp-openrouter-routing" hidden>
+        <h3>OpenRouter</h3>
+        <label>
+          <span data-i18n="options.cp.speed.routing">供應商選擇</span>
+          <select id="cp-routing-sort">
+            <option value="throughput" data-i18n="options.cp.speed.throughput">速度優先（輸出吞吐量）</option>
+            <option value="latency" data-i18n="options.cp.speed.latency">低延遲優先（較早開始回覆）</option>
+            <option value="price" data-i18n="options.cp.speed.price">價格優先</option>
+            <option value="auto" data-i18n="options.cp.speed.auto">OpenRouter 預設</option>
+          </select>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="cp-allow-fallbacks" checked>
+          <span data-i18n="options.cp.speed.fallbacks">允許同一模型的供應商備援</span>
+        </label>
+        <small class="muted" data-i18n="options.cp.speed.routingHint">供應商備援不會自動切換成付費模型。進階 JSON 可覆蓋這些路由與思考參數。</small>
+        <p id="cp-nemotron-hint" class="muted" hidden data-i18n="options.cp.speed.nemotron">Nemotron 免費版目前只有 Nvidia 一個端點；排序不會增加可用供應商。優先停用思考、控制請求速率與批次大小。</p>
+        <a href="https://openrouter.ai/docs/guides/routing/provider-selection" target="_blank" rel="noopener" data-i18n="options.cp.speed.docs">OpenRouter 官方路由說明</a>
+      </div>
+    </section>
+
     <section>
       <h2 data-i18n="options.cp.pricing.heading">模型計價（USD）</h2>
       <p class="muted" data-i18n-html="options.cp.pricing.intro.html">
@@ -942,7 +981,9 @@
     </section>
 
 
+    </div><!-- /custom-provider-form -->
     </div><!-- /tab-custom-provider -->
+    <div id="tab-custom-local" class="tab-panel"></div>
 
     <!-- ═══ 禁用詞清單分頁（v1.5.6 新增） ═══ -->
     <div id="tab-forbidden" class="tab-panel">
@@ -1211,7 +1252,8 @@
         <select id="ytEngine">
           <option value="gemini" data-i18n="options.yt.engine.gemini">Gemini（預設，品質較高，需要 API Key）</option>
           <option value="google" data-i18n="options.yt.engine.google">Google Translate（免費，速度較快，不需 API Key）</option>
-          <option value="openai-compat" data-i18n="options.yt.engine.custom">自訂模型（與「自訂模型」分頁共用設定）</option>
+          <option value="openai-compat-online" data-i18n="options.tab.customOnline">線上自訂模型</option>
+              <option value="openai-compat-local" data-i18n="options.tab.customLocal">本地自訂模型</option>
         </select>
         <small class="muted" data-i18n-html="options.yt.engine.hint.html">
           選擇 Google Translate 時，下方模型、計價、Prompt 設定均不作用（Google MT 不支援自訂 Prompt）。<br>

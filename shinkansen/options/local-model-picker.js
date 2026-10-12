@@ -7,12 +7,29 @@ export function fillModelSelect(select, value, ids, defaultLabel) {
   select.value = value;
 }
 
-export function bindLocalModelPicker({ baseUrl, input, select, refresh, clear, status, hint, apiKey, t, onModels = () => {} }) {
+export async function fetchLocalModels(baseUrl, apiKey = '') {
+  const url = new URL(baseUrl);
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Invalid model URL');
+  url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/chat\/completions$/, '') + '/models';
+  url.search = url.hash = '';
+  const response = await fetch(url.href, {
+    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const body = await response.json();
+  if (!Array.isArray(body.data)) throw new Error('Invalid model list');
+  return body.data.filter(model => typeof model.id === 'string' && model.id &&
+    !(model.owned_by === 'local-llm' && (model.id === 'default' || /[/\\]/.test(model.id))))
+    .map(model => model.id);
+}
+
+export function bindLocalModelPicker({ baseUrl, input, select, refresh, clear, status, hint, apiKey, t, getProviderType, onModels = () => {} }) {
   let request = 0;
   function endpoint() {
     try {
       const url = new URL(baseUrl.value.trim());
-      return ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) &&
+      return (getProviderType ? getProviderType() === 'local' : ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) &&
         ['http:', 'https:'].includes(url.protocol) ? url : null;
     } catch { return null; }
   }
@@ -33,25 +50,14 @@ export function bindLocalModelPicker({ baseUrl, input, select, refresh, clear, s
     status.textContent = t('options.cp.localLoading');
     refresh.disabled = true;
     select.setAttribute('aria-busy', 'true');
-    url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/chat\/completions$/, '') + '/models';
-    url.search = url.hash = '';
     try {
-      const key = apiKey.value.trim();
-      const response = await fetch(url.href, {
-        headers: key ? { Authorization: `Bearer ${key}` } : {},
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = await response.json();
-      if (!Array.isArray(body.data)) throw new Error('Invalid model list');
-      const ids = body.data.filter(model => typeof model.id === 'string' && model.id &&
-        !(model.owned_by === 'local-llm' && (model.id === 'default' || /[/\\]/.test(model.id))))
-        .map(model => model.id);
+      const ids = await fetchLocalModels(url.href, apiKey.value.trim());
       if (token !== request) return;
       render(ids);
       status.textContent = t(ids.length ? 'options.cp.localReady' : 'options.cp.localEmpty');
     } catch {
       if (token !== request) return;
+      input.hidden = hint.hidden = false;
       status.textContent = t('options.cp.localError');
     } finally {
       if (token === request) {
