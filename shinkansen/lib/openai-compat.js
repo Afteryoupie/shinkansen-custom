@@ -73,6 +73,8 @@ function resolveChatCompletionsUrl(baseUrl) {
  */
 export async function translateBatch(texts, settings, glossary, fixedGlossary, forbiddenTerms) {
   const cp = settings.customProvider || {};
+  // ASR reads /api/status before translateChunk; prepare the model first.
+  if (texts?.length) await ensureLocalLlamaServer(cp.baseUrl, cp.model);
   const numbered = /ASR/i.test(cp.systemPrompt || '') && texts?.length === 1 && /^\s*1[|｜]/.test(texts[0]);
   if ((numbered || texts?.length > 1) && isWatchdogProvider(cp.baseUrl)) {
     let activeModel = cp.model;
@@ -171,7 +173,7 @@ async function translateChunk(texts, settings, glossary, fixedGlossary, forbidde
   if (isWatchdogProvider(baseUrl)) {
     body.shinkansen_target_language = (LANG_LABELS[settings.targetLanguage] || settings.targetLanguage || '').split('(')[0].trim();
   }
-  await ensureLocalLlamaServer(url);
+  await ensureLocalLlamaServer(url, model);
   // v1.6.7: apiKey 為空時不送 Authorization（本機 llama.cpp / Ollama 等不需要 key）
   const headers = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
 
@@ -337,7 +339,7 @@ export async function extractGlossary(compressedText, settings) {
   if (model) body.model = model;
 
   const url = resolveChatCompletionsUrl(baseUrl);
-  await ensureLocalLlamaServer(url);
+  await ensureLocalLlamaServer(url, model);
   const headers = apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {};
 
   await debugLog('info', 'glossary', 'openai-compat glossary extraction request', {

@@ -11,12 +11,14 @@ $backend = $null
 try { $backend = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/status' -TimeoutSec 2 } catch {}
 if (-not $backend) {
     Start-Process -FilePath $Pythonw -ArgumentList '-m watchdog.llm_watchdog' -WorkingDirectory $RepoRoot -WindowStyle Hidden
-    $deadline = (Get-Date).AddSeconds(15)
+    $deadline = (Get-Date).AddSeconds(60)
     do {
         Start-Sleep -Milliseconds 200
         try { $backend = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/status' -TimeoutSec 2 } catch {}
     } while (-not $backend -and (Get-Date) -lt $deadline)
-    if (-not $backend) { throw 'LLM watchdog 啟動失敗：無法連接本機 API。' }
+    if (-not $backend -and -not $Silent) {
+        Write-Warning 'LLM watchdog 後端仍在載入中（尚未回應 8080），系統匣將先行啟動並自動重連。'
+    }
 }
 $trays = Get-CimInstance Win32_Process | Where-Object {
     $_.Name -eq 'pythonw.exe' -and $_.CommandLine -and $_.CommandLine.Contains($TrayScript)

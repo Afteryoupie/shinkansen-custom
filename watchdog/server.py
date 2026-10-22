@@ -417,10 +417,6 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
             return
 
         # ── 9. 一般推論請求（/v1/...）：自動喚醒並轉發 ──
-        if request_lock().locked():
-            await send_model_error(client_writer, "409 Conflict", "模型正被其他請求使用，請稍後重試")
-            return
-
         # Read the requested model before waking an engine or rewriting its body.
         header_bytes, sep, body_bytes = initial_data.partition(b"\r\n\r\n")
         cl_val = None
@@ -453,11 +449,19 @@ async def handle_proxy_client(client_reader: asyncio.StreamReader, client_writer
                 return
 
         # Hold this gate until the complete response (including SSE) has finished.
+        # Queue up to 130s instead of failing immediately with 409 during cold start or active inference.
         inference_lock = request_lock()
-        if inference_lock.locked():
-            await send_model_error(client_writer, "409 Conflict", "模型正被其他請求使用，請稍後重試")
+        try:
+            await asyncio.wait_for(inference_lock.acquire(), timeout=130)
+        except asyncio.TimeoutError:
+            inference_lock = None
+            await send_model_error(client_writer, "503 Service Unavailable", "等待模型佇列逾時，請稍後重試")
             return
-        await inference_lock.acquire()
+        # Read EOF can be a valid HTTP half-close; keep its response stream alive.
+        if client_writer.is_closing():
+            inference_lock.release()
+            inference_lock = None
+            return
         state.active_requests += 1
         state.last_active_time = time.time()
         try:

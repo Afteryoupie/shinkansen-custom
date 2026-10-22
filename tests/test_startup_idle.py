@@ -8,7 +8,7 @@ from watchdog.state import state
 
 class StartupIdleTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        keys = ('current_model', 'models', 'llm_proc', 'is_starting', 'last_active_time', 'auto_sleep_enabled', 'active_requests', 'lock', 'should_exit')
+        keys = ('current_model', 'models', 'llm_proc', 'is_starting', 'last_active_time', 'auto_sleep_enabled', 'active_requests', 'lock', 'request_lock', 'should_exit')
         self.saved = {k: getattr(state, k) for k in keys}
         state.current_model = dict(id='K2-Horizon', name='K2-Horizon', type='gguf', path='/tmp/K2-Horizon.gguf', idle_timeout=180)
         state.models = [state.current_model]
@@ -43,7 +43,8 @@ class StartupIdleTests(unittest.IsolatedAsyncioTestCase):
             await manager.idle_checker()
             stop.assert_not_called()
 
-    async def test_k2_ready_after_old_limit(self):
+    async def test_translation_gguf_ready_after_old_limit(self):
+        state.current_model.update(id="Riva-Translate", name="Riva-Translate", path="/tmp/Riva.gguf")
         proc = state.llm_proc
         state.llm_proc = None
         state.is_starting = False
@@ -64,3 +65,52 @@ class StartupIdleTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await manager.start_llm())
             stop.assert_called_once()
             self.assertFalse(state.is_starting)
+
+    async def test_remembered_model_restored_on_init(self):
+        import tempfile
+        from pathlib import Path
+        models = [
+            {"id": "Qwen3VL-8B", "name": "Qwen3VL-8B", "type": "gguf", "path": "/tmp/q.gguf"},
+            {"id": "Riva-Translate-4B", "name": "Riva-Translate-4B", "type": "gguf", "path": "/tmp/r.gguf"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            last_file = Path(tmp) / "last_model.json"
+            with patch.object(manager, "LAST_MODEL_FILE", last_file), patch.object(manager, "scan_models", return_value=models), patch.object(manager, "start_llm", AsyncMock(return_value=True)), patch.object(manager, "stop_llm"):
+                ok, _ = await manager.switch_model("Riva-Translate-4B")
+                self.assertTrue(ok)
+                self.assertTrue(last_file.is_file())
+                state.current_model = None
+                manager.init_models()
+                self.assertEqual(state.current_model["id"], "Riva-Translate-4B")
+
+    async def test_concurrent_inference_requests_queue_instead_of_409(self):
+        state.request_lock = asyncio.Lock()
+        await state.request_lock.acquire()
+
+        async def release_soon():
+            await asyncio.sleep(0.05)
+            state.request_lock.release()
+
+        rel_task = asyncio.create_task(release_soon())
+        reader = asyncio.StreamReader()
+        body = b'{"model":"default","messages":[{"role":"user","content":"hi"}]}'
+        req = (
+            f"POST /v1/chat/completions HTTP/1.1\r\n"
+            f"Host: 127.0.0.1\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n\r\n"
+        ).encode() + body
+        reader.feed_data(req)
+        writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock(), is_closing=Mock(return_value=False))
+
+        llm_reader = asyncio.StreamReader()
+        llm_reader.feed_data(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+        llm_reader.feed_eof()
+        llm_writer = Mock(drain=AsyncMock(), wait_closed=AsyncMock())
+
+        with patch.object(server, "start_llm", AsyncMock(return_value=True)), patch.object(server.asyncio, "open_connection", AsyncMock(return_value=(llm_reader, llm_writer))):
+            await server.handle_proxy_client(reader, writer)
+        await rel_task
+        written = b"".join(c.args[0] for c in writer.write.call_args_list)
+        self.assertIn(b"200 OK", written)
+        self.assertNotIn(b"409 Conflict", written)

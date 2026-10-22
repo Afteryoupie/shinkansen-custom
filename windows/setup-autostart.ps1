@@ -7,6 +7,7 @@
 $RegPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $RegName = "LLM_Watchdog"
 $TargetScript = Join-Path $PSScriptRoot "start-watchdog.ps1"
+$NativeInstaller = Join-Path $PSScriptRoot "install-native-host.ps1"
 $Command = "powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$TargetScript`" -Silent"
 
 if ($Uninstall) {
@@ -20,12 +21,19 @@ if ($Uninstall) {
     } else {
         Write-Host "[提示] 尚未設定開機自動啟動，無需解除。" -ForegroundColor Yellow
     }
+    if (Test-Path -LiteralPath $NativeInstaller) {
+        & $NativeInstaller -Uninstall
+    }
     Start-Sleep -Seconds 2
     exit 0
 }
 
 # 寫入 Windows 原生自啟動註冊表 (完全靜默，無確認畫面跳出)
 Set-ItemProperty -Path $RegPath -Name $RegName -Value $Command
+
+if (Test-Path -LiteralPath $NativeInstaller) {
+    & $NativeInstaller
+}
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "  LLM watchdog - 開機自動啟動設定" -ForegroundColor Cyan

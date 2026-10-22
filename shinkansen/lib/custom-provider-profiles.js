@@ -13,6 +13,19 @@ export function inferProviderType(baseUrl) {
   return globalThis.__SKProviderPerformance.inferType(baseUrl);
 }
 
+// Synchronized Mac choices cannot run on a Windows loopback server. An empty
+// model uses that server's current/default model; LAN/cloud backends stay intact.
+export function localModelForPlatform(model, baseUrl) {
+  const platform = globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || '';
+  if (!/^win/i.test(platform) || !/^(apple(?:[- ]|$)|foundation.?models)/i.test(model || '')) return model;
+  try {
+    const url = new URL(baseUrl);
+    if (['http:', 'https:'].includes(url.protocol) &&
+        ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return '';
+  } catch { /* Invalid endpoints retain their normal validation error. */ }
+  return model;
+}
+
 // Keep credentials out of synchronized settings and exported backups.
 export function providerConfig(raw = {}) {
   const config = {};
@@ -46,6 +59,7 @@ export function resolveProviderProfiles(settings, defaults, local = {}) {
     const saved = settings[type === 'online' ? 'customProviderOnline' : 'customProviderLocal'];
     profiles[type] = { ...profiles[type], ...providerConfig(saved || (type === legacyType ? settings.customProvider : {})) };
   }
+  profiles.local.model = localModelForPlatform(profiles.local.model, profiles.local.baseUrl);
   const keys = {};
   for (const type of PROVIDER_TYPES) {
     keys[type] = typeof local.customProviderApiKeys?.[type] === 'string'

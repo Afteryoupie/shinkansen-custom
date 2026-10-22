@@ -6,8 +6,7 @@ test('Blank model resolves Riva and translates ASR sentence groups with complete
   const originalFetch = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (url, options) => {
-    if (String(url).endsWith('/api/status')) return Response.json({current_model_id:'Riva-Translate-test'});
-    if (String(url).endsWith('/models')) return Response.json({data:[]});
+    if (String(url).endsWith('/api/status')) return Response.json({status:'running',current_model_id:'Riva-Translate-test'});
     const body = JSON.parse(options.body);
     requests.push(body);
     const text = body.messages[1].content;
@@ -27,7 +26,7 @@ test('Riva ASR groups remain bounded without dropping fragment IDs', async () =>
   const originalFetch = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (url, options) => {
-    if (String(url).endsWith('/models')) return Response.json({data:[]});
+    if (String(url).endsWith('/api/status')) return Response.json({status:'running',current_model_id:'Riva-Translate-test'});
     const body=JSON.parse(options.body); requests.push(body);
     return Response.json({choices:[{message:{content:'完整譯文'},finish_reason:'stop'}]});
   };

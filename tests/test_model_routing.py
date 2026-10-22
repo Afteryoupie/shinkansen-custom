@@ -41,7 +41,11 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
         else:writer.write(head+body)
         await writer.drain()
         if halfclose:writer.write_eof()
-        result=await asyncio.wait_for(reader.read(),3);writer.close();await writer.wait_closed();return result
+        try:
+            return await asyncio.wait_for(reader.read(),3)
+        finally:
+            writer.close()
+            await writer.wait_closed()
     async def test_id_switch(self):
         self.assertIn(b'200 OK',await self.request('b'));self.assertEqual(self.switches,['b']);self.assertEqual(self.captured[0]['model'],'/models/b');self.assertEqual(state.active_requests,0)
     async def test_name_and_path(self):
@@ -52,19 +56,26 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'400 Bad Request',await self.request('unknown'));self.assertIn(b'400 Bad Request',await self.request(123));self.assertEqual(self.captured,[])
     async def test_fragmented_request(self):
         self.assertIn(b'200 OK',await self.request('b',fragment=True))
-    async def test_busy_rejected_until_stream_finishes(self):
+    async def test_busy_queues_until_stream_finishes_with_half_closed_clients(self):
         self.hold=True;first=asyncio.create_task(self.request('a',halfclose=True))
-        while not self.captured:await asyncio.sleep(.01)
+        second = None
         try:
-            response=await self.request('b')
-            self.assertIn(b'409 Conflict',response)
+            async with asyncio.timeout(2):
+                while not self.captured:await asyncio.sleep(.01)
+            second = asyncio.create_task(self.request('b', halfclose=True))
+            await asyncio.sleep(.05)
+            self.assertFalse(second.done(), 'The next model must wait for the active stream')
+            self.assertEqual(len(self.captured), 1)
             self.assertEqual(self.switches,[])
         finally:
             self.gate.set()
-            r1=await first
+            responses = await asyncio.gather(*([first, second] if second else [first]))
+        r1, response = responses
         self.assertIn(b'[DONE]',r1)
-        self.assertIn(b'200 OK',await self.request('b'))
+        self.assertIn(b'200 OK',response)
         self.assertEqual(self.switches,['b'])
+        self.assertEqual(state.active_requests, 0)
+        self.assertFalse(state.request_lock.locked())
     async def test_start_failure_clears_busy(self):
         with patch.object(server,'start_llm',AsyncMock(return_value=False)):
             self.assertIn(b'503 Service Unavailable',await self.request())

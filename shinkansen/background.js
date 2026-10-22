@@ -12,7 +12,7 @@ import { IS_IOS_BUILD } from './lib/distribution.js'; // Phase 2: host app 設�
 import { translateBatch, extractGlossary, extractTermRenderings, translateBatchStream, summarizeArticle } from './lib/gemini.js';
 import { providerSettings } from './lib/custom-provider-profiles.js';
 import { translateBatch as translateBatchCustom, extractGlossary as extractGlossaryCustom } from './lib/openai-compat.js'; // v1.5.7
-import { ensureLocalLlamaServer } from './custom/local-llama.js';
+import { ensureLocalLlamaServer, ensureLocalLayaDecision } from './custom/local-llama.js';
 import { translateGoogleBatch } from './lib/google-translate.js';
 import { getSettingsCached, setSettings, cleanupLegacySyncKeys, DEFAULT_SUBTITLE_SYSTEM_PROMPT, DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT, DEFAULT_DOC_SYSTEM_PROMPT, DOC_INLINE_MARKER_INSTRUCTION, getEffectiveSystemPrompt, getEffectiveSubtitleSystemPrompt, getEffectiveAsrSubtitleSystemPrompt, getEffectiveDocSystemPrompt, getEffectiveGlossaryPrompt, LANG_LABELS, isPromptUnchangedFromAnyTargetDefault, DEFAULT_SETTINGS } from './lib/storage.js';
 import { debugLog, getLogs, clearLogs, getPersistedLogs, getAnomalyLogs, clearPersistedLogs } from './lib/logger.js';
@@ -659,6 +659,34 @@ async function applyJevSubtitleFilter(payload, settings, doTranslateFn, asr = fa
 
 // ─── 訊息路由（handler map 取代 if-else 鏈） ──────────────────
 const messageHandlers = {
+  WARMUP_YT_TRANSLATION: {
+    async: true,
+    handler: async () => {
+      const saved = await getSettingsCached();
+      const yt = saved.ytSubtitle || {};
+      const engine = yt.engine || '';
+      if (engine.startsWith('openai-compat')) {
+        const settings = providerSettings(saved, engine);
+        const cp = settings.customProvider || {};
+        const isLocal = engine === 'openai-compat-local' || (engine !== 'openai-compat-online' && isLocalSubtitleProvider(cp));
+        if (isLocal) {
+          await debugLog('info', 'youtube', 'local model warmup start', {
+            model: cp.model || '<server-default>',
+            laya: yt.jevEnabled !== false,
+          });
+          const tasks = [ensureLocalLlamaServer(cp.baseUrl, cp.model)];
+          if (yt.jevEnabled !== false) {
+            tasks.push(ensureLocalLayaDecision(yt.jevApiUrl).catch(error => {
+              debugLog('warn', 'youtube', 'laya warmup failed', { error: error.message });
+            }));
+          }
+          await Promise.all(tasks);
+          await debugLog('info', 'youtube', 'local model warmup ready', { model: cp.model || '<server-default>' });
+        }
+      }
+      return { ok: true };
+    },
+  },
   // DEBUG: 給 Debug Bridge 觸發 hot reload(讀取磁碟最新 unpacked extension code)。
   // 之後內容腳本會在下次頁面載入時以新 code 重新注入。SW 自身會在呼叫後立即重啟，
   // 故無法 sendResponse;Bridge 端視為 fire-and-forget。
@@ -1963,7 +1991,7 @@ async function testCustomProvider(payload) {
 
   const url = /\/chat\/completions$/.test(baseUrl) ? baseUrl : baseUrl + '/chat/completions';
   try {
-    await ensureLocalLlamaServer(url);
+    await ensureLocalLlamaServer(url, model);
     const headers = { 'Content-Type': 'application/json' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
     const reqBody = {

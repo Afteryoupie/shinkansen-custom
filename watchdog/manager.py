@@ -7,6 +7,7 @@ watchdog.manager
 
 import os
 import sys
+import json
 import time
 import asyncio
 import subprocess
@@ -30,6 +31,7 @@ from watchdog.config import (
     APPLE_API_BIN,
     LLM_INTERNAL_PORT,
     DEFAULT_IDLE_TIMEOUT,
+    LAST_MODEL_FILE,
     is_translation_model,
 )
 from watchdog.state import state
@@ -157,14 +159,40 @@ def scan_models() -> List[Dict[str, Any]]:
     discovered.sort(key=sort_key)
     return discovered
 
+def load_last_model_id() -> Optional[str]:
+    """讀取上次持久化保存的模型 ID"""
+    try:
+        if LAST_MODEL_FILE.is_file():
+            data = json.loads(LAST_MODEL_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("id"), str) and data["id"].strip():
+                return data["id"].strip()
+    except Exception:
+        pass
+    return None
+
+def save_last_model_id(model_id: str) -> None:
+    """持久化保存當前選用的模型 ID"""
+    try:
+        LAST_MODEL_FILE.write_text(
+            json.dumps({"id": model_id}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
 def init_models():
-    """初始化載入可用模型，若有預設模型則設定為當前模型"""
+    """初始化載入可用模型，優先還原上次選用的模型，否則使用排序第一的模型"""
     state.models = scan_models()
     if not state.models:
         raise FileNotFoundError(f"在 {MODELS_DIR} 找不到任何相容模型！")
     
     if not state.current_model:
-        state.current_model = state.models[0]
+        last_id = load_last_model_id()
+        remembered = next(
+            (m for m in state.models if last_id and last_id in (m["id"], m.get("name"))),
+            None,
+        )
+        state.current_model = remembered or state.models[0]
         print(f"[系統] 預設模型: {state.current_model['name']} (類型: {state.current_model['type']})")
 
 async def _probe_llm_ready() -> bool:
@@ -362,10 +390,8 @@ async def start_llm() -> bool:
 
             state.llm_proc = subprocess.Popen(**popen_kwargs)
 
-            # K2 cold starts may include disk loading and Metal initialization.
-            startup_timeout = 120 if m["type"] == "gguf" and "k2-horizon" in " ".join(
-                str(m.get(key, "")) for key in ("id", "name", "path")
-            ).lower() else 25
+            # GGUF cold starts include disk loading and GPU initialization on Windows too.
+            startup_timeout = 120 if m["type"] == "gguf" else 25
             t0 = time.monotonic()
             while time.monotonic() - t0 < startup_timeout:
                 if state.llm_proc is None:
@@ -428,11 +454,13 @@ async def switch_model(target_id: str) -> Tuple[bool, str]:
             return False, f"找不到模型: {target_id}"
 
         if state.current_model and state.current_model["id"] == target["id"] and state.llm_proc and state.llm_proc.poll() is None:
+            save_last_model_id(target["id"])
             return True, "模型已在運行中"
 
         print(f"\n[🔄 切換模型] 切換至: {target['name']}", flush=True)
         stop_llm()
         state.current_model = target
+        save_last_model_id(target["id"])
 
     ok = await start_llm()
     if ok:

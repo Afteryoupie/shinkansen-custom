@@ -1,6 +1,6 @@
 // storage.js — 設定讀寫封裝
 import { browser } from './compat.js';
-import { resolveProviderProfiles, activeProvider } from './custom-provider-profiles.js';
+import { resolveProviderProfiles, activeProvider, providerSettings, CUSTOM_ENGINES, localModelForPlatform } from './custom-provider-profiles.js';
 import { DEFAULT_UNITS_PER_BATCH, DEFAULT_CHARS_PER_BATCH } from './constants.js';
 
 // v0.83: 預設 system prompt 全面升級——從「翻譯助理」提升為「首席翻譯專家」，
@@ -1279,6 +1279,14 @@ export async function getSettings() {
       ...providerState.profiles[type], profileType: type, apiKey: providerState.keys[type] || '',
     };
   }
+  const platformModel = config => {
+    if (!CUSTOM_ENGINES.includes(config?.engine) || config.engine === 'openai-compat-online') return config;
+    const provider = providerSettings(merged, config.engine).customProvider;
+    if (provider.profileType !== 'local') return config;
+    return { ...config, model: localModelForPlatform(config.model, provider.baseUrl) };
+  };
+  merged.ytSubtitle = platformModel(merged.ytSubtitle);
+  merged.translatePresets = merged.translatePresets.map(platformModel);
   return merged;
 }
 

@@ -353,7 +353,13 @@
 
   async function getYtConfig() {
     if (SK.YT.config) return SK.YT.config;
-    const saved = await browser.storage.sync.get(['ytSubtitle', 'displayMode', 'customProvider', 'targetLanguage']);
+    if (SK.isExtensionContextAlive && !SK.isExtensionContextAlive()) return { ...DEFAULT_YT_CONFIG };
+    let saved = {};
+    try {
+      saved = await browser.storage.sync.get(['ytSubtitle', 'displayMode', 'customProvider', 'targetLanguage']) || {};
+    } catch (_) {
+      return { ...DEFAULT_YT_CONFIG };
+    }
     // v2.0.85:字幕雙語對照與整頁「顯示模式」合併——bilingualMode 唯一來源是
     // displayMode === 'dual'(單一資料源,CLAUDE.md 工作流原則 §5)。舊版 popup toggle
     // 寫的 ytSubtitle.bilingualMode 殘留 key 一律忽略(spread 後強制覆寫)。
@@ -368,6 +374,21 @@
   }
   // 暴露給 spec 用(youtube-bilingual-displaymode 路徑 A regression 驗 displayMode 導出)
   SK._getYtConfig = getYtConfig;
+
+  function _triggerLocalModelWarmup(config) {
+    if (!config?.engine?.startsWith('openai-compat') || !config.localModel) return;
+    SK.safeSendMessage({ type: 'WARMUP_YT_TRANSLATION' }).then(response => {
+      if (response?.ok === false) SK.sendLog('warn', 'youtube', 'local model warmup failed', { error: response.error });
+    }).catch(error => SK.sendLog('warn', 'youtube', 'local model warmup failed', { error: error.message }));
+  }
+
+  async function _warmupWatchPageOnEnter() {
+    if (!SK.isYouTubePage?.()) return;
+    try {
+      const config = await getYtConfig();
+      _triggerLocalModelWarmup(config);
+    } catch (_) { /* ignore */ }
+  }
 
   // ─── 時間字串轉 ms（TTML 格式 "HH:MM:SS.mmm"） ────────────
 
@@ -541,6 +562,7 @@
   }
 
   window.addEventListener('shinkansen-yt-captions', async (e) => {
+    if (SK.isExtensionContextAlive && !SK.isExtensionContextAlive()) return;
     const { url, responseText } = e.detail || {};
     if (!responseText) return;
 
@@ -623,6 +645,7 @@
       const video = document.querySelector('video');
       const currentMs = video ? Math.floor(video.currentTime * 1000) : 0;
       const config = YT.config || await getYtConfig();
+      _triggerLocalModelWarmup(config);
       const windowSizeMs = (config.windowSizeS || 30) * 1000;
       const windowStartMs = Math.floor(currentMs / windowSizeMs) * windowSizeMs;
       _debugUpdate(`XHR 攔截 ${segments.length} 條字幕（至 ${Math.round(lastMs / 1000)}s），開始翻譯`);
@@ -4700,6 +4723,7 @@
     attachVideoListener();
 
     const config = await getYtConfig();
+    _triggerLocalModelWarmup(config);
     _debugUpdate('字幕翻譯已啟動，等待 CC 字幕資料…');
 
     // v1.8.42:確保 player root class / stylesheet / overlay 狀態對齊雙語設定。
@@ -4716,7 +4740,13 @@
     // 解 YT 帳號 auto-translate 偏好套用到全部影片時 Shinkansen 拿到的不是原始 ASR
     // 而是 YT 已翻譯後 zh-Hans 字幕的問題（_chooseBestCaptionTrack 註解詳述）。
     if (config.preferOriginalTrack !== false) {
-      const { targetLanguage = 'zh-TW' } = await browser.storage.sync.get('targetLanguage');
+      let targetLanguage = config.targetLanguage || 'zh-TW';
+      try {
+        if (!SK.isExtensionContextAlive || SK.isExtensionContextAlive()) {
+          const res = await browser.storage.sync.get('targetLanguage');
+          if (res?.targetLanguage) targetLanguage = res.targetLanguage;
+        }
+      } catch (_) {}
       const action = await _runCaptionTrackChooser(targetLanguage);
       // skip / switch-to-native:YT 顯示 native target,Shinkansen 沒翻譯工作
       // - 單語:stopYouTubeTranslation 清監聽(target 顯示就是終點)
@@ -4909,6 +4939,7 @@
   // 'state-navigateend'(probe 實證)。同一 handler 掛兩個事件名:各平台只會 fire
   // 自己那個,且 handler 開頭的同 videoId guard 讓萬一重複 fire 也是 no-op。
   async function _onYtSpaNavigate() {
+    if (SK.isExtensionContextAlive && !SK.isExtensionContextAlive()) return;
     const YT = SK.YT;
     // v1.8.68: YouTube SPA 在 quality 切換 / ad break 結束 / player re-mount /
     // theatre-fullscreen 切換等情境會 fire 假性 yt-navigate-finish(同一影片頁、
@@ -4950,6 +4981,7 @@
     // 若導航到非 watch 頁（例如首頁），略過。
     // 延遲 500ms 等 YouTube 播放器初始化並發出新字幕 XHR
     if (!SK.isYouTubePage?.()) return;
+    _warmupWatchPageOnEnter();
     try {
       const saved = await browser.storage.sync.get('ytSubtitle');
       const shouldRestart = wasActive || saved.ytSubtitle?.autoTranslate;
@@ -5014,6 +5046,9 @@
     const sc = s?.ytSubtitle?.captionScale;
     if (sc != null) _applyYtCaptionScale(sc);
   }).catch(() => { /* 預設 100 */ });
+
+  // 進入 YouTube 觀看頁時立即預熱本機 LLM 與 Laya 決策模型（不等按翻譯）
+  _warmupWatchPageOnEnter();
 
   // ─── 對外 export:給 content-drive.js(Drive ASR commit 3+)共用 ─────
   // parseJson3:json3 → raw segments [{text, normText, startMs, groupId}]

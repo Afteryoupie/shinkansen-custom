@@ -85,6 +85,9 @@ PID_FILE = (
     else Path("/tmp/llm_watchdog.pid")
 )
 
+# 記憶上次使用模型的設定檔
+LAST_MODEL_FILE = PACKAGE_DIR / "last_model.json"
+
 def is_translation_model(name: str) -> bool:
     """判斷模型是否為翻譯專用模型（適用閒置休眠策略）"""
     lower = name.lower()

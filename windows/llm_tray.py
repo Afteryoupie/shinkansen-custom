@@ -310,4 +310,8 @@ class LLMTray:
 
 
 if __name__ == '__main__':
+    import ctypes
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, True, 'Local\\LLM_Watchdog_Tray_Mutex')
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        raise SystemExit(0)
     LLMTray().run()

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { translateSingleBlock, translateDocument } from '../shinkansen/translate-doc/translate.js';
-import { resolveProviderProfiles, activeProvider, inferProviderType, providerSettings } from '../shinkansen/lib/custom-provider-profiles.js';
+import { resolveProviderProfiles, activeProvider, inferProviderType, providerSettings, localModelForPlatform } from '../shinkansen/lib/custom-provider-profiles.js';
 import { DEFAULT_SETTINGS, getSettings, setSettings } from '../shinkansen/lib/storage.js';
 import { sanitizeImport } from '../shinkansen/options/import-sanitize.js';
 import { isLocalSubtitleProvider } from '../shinkansen/lib/local-subtitle.js';
@@ -102,6 +102,49 @@ test('Both custom translation choices survive settings import independently', ()
   assert.equal(clean.translatePresets[1].engine, 'openai-compat-local');
   assert.equal(clean.translatePresets[1].model, 'local-model');
   assert.equal(clean.ytSubtitle.engine, 'openai-compat-online');
+});
+
+test('Windows reload uses the server default for synchronized Apple choices and retains saved usable models', async () => {
+  const navigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { platform: 'Win32' } });
+  const apple = 'apple-intelligence-translation';
+  const baseUrl = 'http://127.0.0.1:8080/v1';
+  const sync = { localModelSelectionsSaved: true, customProviderType: 'local',
+    customProvider: { baseUrl, model: apple }, customProviderLocal: { baseUrl, model: apple },
+    customProviderOnline: { baseUrl: 'https://mac.example.com/v1', model: apple },
+    ytSubtitle: { engine: 'openai-compat', model: apple, decisionBackend: 'laya' },
+    translatePresets: [
+      { slot: 1, engine: 'openai-compat-local', model: apple },
+      { slot: 2, engine: 'openai-compat-online', model: apple },
+      { slot: 3, engine: 'openai-compat', model: 'Riva-Translate' },
+    ] };
+  const area = values => ({
+    get: async () => structuredClone(values),
+    set: async patch => Object.assign(values, patch), remove: async () => {},
+  });
+  globalThis.chrome = { storage: { sync: area(sync), local: area({}) } };
+  try {
+    for (let reload = 0; reload < 2; reload++) {
+      const settings = await getSettings();
+      assert.equal(settings.customProvider.model, '');
+      assert.equal(settings.customProviderLocal.model, '');
+      assert.equal(settings.ytSubtitle.model, '');
+      assert.deepEqual(settings.translatePresets.map(p => p.model), ['', apple, 'Riva-Translate']);
+      assert.equal(settings.customProviderOnline.model, apple);
+      assert.equal(sync.customProviderLocal.model, apple, 'Do not overwrite the Mac synchronized choice');
+    }
+    await setSettings({ customProvider: { model: 'Riva-Translate' } });
+    assert.equal((await getSettings()).customProvider.model, 'Riva-Translate');
+    assert.equal(localModelForPlatform(apple, 'http://192.168.1.4:8080/v1'), apple);
+    assert.equal(localModelForPlatform(apple, 'https://localhost.example.com/v1'), apple);
+    assert.equal(localModelForPlatform('apple-foundation-system', 'http://localhost:8080/v1'), '');
+    globalThis.navigator.platform = 'MacIntel';
+    assert.equal(localModelForPlatform(apple, baseUrl), apple);
+  } finally {
+    delete globalThis.chrome;
+    if (navigator) Object.defineProperty(globalThis, 'navigator', navigator);
+    else delete globalThis.navigator;
+  }
 });
 
 test('Legacy backups replace the matching profile on an upgraded installation', () => {

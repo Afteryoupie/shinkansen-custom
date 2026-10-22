@@ -101,6 +101,9 @@ Models/
 *.bin
 *.safetensors
 watchdog/LLMMenuBar
+watchdog/last_model.json
+windows/native_host/llama_launcher.exe
+windows/native_host/com.llm_project.llama_launcher.json
 backends/
 LLMMenuBar
 

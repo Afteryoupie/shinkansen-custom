@@ -1,76 +1,90 @@
-// custom/local-llama.js — 本地 llama-server (0% 顯存智慧守護代理) 自動喚醒模組
-// 獨立模組：負責在發送推論請求前探測 127.0.0.1:8080，休眠中則自動發出喚醒訊號並等待就緒
+// Wait for local inference readiness before starting the translation timeout.
+const starting = new Map();
+const startingLaya = new Map();
 
-let _startingLlamaPromise = null;
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function requestNativeLauncher() {
+  const runtime = globalThis.chrome?.runtime;
+  if (!runtime?.sendNativeMessage) return Promise.resolve(null);
+  return new Promise(resolve => {
+    try {
+      runtime.sendNativeMessage('com.llm_project.llama_launcher', { action: 'start' }, response => {
+        if (runtime.lastError) console.warn('[shinkansen-custom] Native host: ' + runtime.lastError.message);
+        resolve(response || null);
+      });
+    } catch (error) {
+      console.warn('[shinkansen-custom] Native host: ' + error.message);
+      resolve(null);
+    }
+  });
 }
 
-/**
- * 探測並在必要時拉起本地 llama-server
- * @param {string} baseUrl
- * @returns {Promise<void>}
- */
-export async function ensureLocalLlamaServer(baseUrl) {
-  if (!baseUrl || (!baseUrl.includes('127.0.0.1') && !baseUrl.includes('localhost'))) {
-    return;
-  }
-
-  const checkUrl = baseUrl.endsWith('/chat/completions')
-    ? baseUrl.replace('/chat/completions', '/models')
-    : (baseUrl.replace(/\/+$/, '') + '/models');
-
-  try {
-    const probe = await fetch(checkUrl, { signal: AbortSignal.timeout(800) });
-    if (probe.ok) return;
-  } catch (_) {
-    // 端口尚未開放（模型處於休眠或未啟動狀態）
-  }
-
-  if (_startingLlamaPromise) {
-    return _startingLlamaPromise;
-  }
-
-  _startingLlamaPromise = (async () => {
-    console.info('[shinkansen-custom] 本地模型處於休眠狀態，正在透過 Native Messaging 喚醒守護代理...');
-
-    // 1. 透過 Chrome / Edge Native Messaging Host (com.llm_project.llama_launcher) 喚醒
+async function prepareLocalServer(url, model) {
+  const watchdog = url.port === '8080';
+  const checkUrl = watchdog ? new URL('/api/status', url).href
+    : url.href.replace(/\/chat\/completions\/?$/, '').replace(/\/+$/, '') + '/models';
+  const probe = async () => {
     try {
-      if (typeof chrome !== 'undefined' && chrome.runtime?.sendNativeMessage) {
-        chrome.runtime.sendNativeMessage('com.llm_project.llama_launcher', { action: 'start' }, (resp) => {
-          if (chrome.runtime.lastError) {
-            console.warn('[shinkansen-custom] Native host 警告: ' + chrome.runtime.lastError.message);
-          } else {
-            console.info('[shinkansen-custom] Native host 喚醒回應: ' + JSON.stringify(resp));
-          }
-        });
-      }
-    } catch (e) {
-      console.warn('[shinkansen-custom] sendNativeMessage 異常: ' + e.message);
+      const response = await fetch(checkUrl, { signal: AbortSignal.timeout(2000) });
+      if (!response.ok) return null;
+      return watchdog ? await response.json() : { status: 'running' };
+    } catch (_) { return null; }
+  };
+  let status = await probe();
+  if (!status) {
+    // Only needed when the proxy itself is offline, not when its model sleeps.
+    await requestNativeLauncher();
+    const deadline = Date.now() + 15000;
+    while (!status && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 600));
+      status = await probe();
     }
-
-    // 2. 透過 HTTP Bridge 備援喚醒
-    try {
-      fetch('http://127.0.0.1:8765/start-llama', { method: 'POST' }).catch(() => {});
-    } catch (_) {}
-
-    // 3. 輪詢直到本地 llama-server 就緒（最長等候 15 秒）
-    const t0 = Date.now();
-    while (Date.now() - t0 < 15000) {
-      await sleep(600);
-      try {
-        const check = await fetch(checkUrl, { signal: AbortSignal.timeout(800) });
-        if (check.ok) {
-          console.info(`[shinkansen-custom] 本地 llama-server 已就緒！耗時 ${Date.now() - t0}ms`);
-          return;
-        }
-      } catch (_) {}
-    }
-    console.warn('[shinkansen-custom] 本地 llama-server 喚醒等候超時（15 秒）');
-  })().finally(() => {
-    _startingLlamaPromise = null;
+    if (!status) throw new Error('無法連線到本機 LLM 服務，請啟動 LLM watchdog（或執行 windows/install-native-host.ps1 註冊自動喚醒）。');
+  }
+  if (!watchdog) return;
+  const target = status.models?.find(m => [m.id, m.name, m.path].includes(model));
+  const switchModel = model && ![status.current_model_id, status.current_model].includes(target?.id || model);
+  if (!switchModel && status.status === 'running') return;
+  // /v1/models is a passive catalog and succeeds even while the model sleeps.
+  // /api/wake waits for the engine's health check, including an ongoing start.
+  const wakeUrl = new URL(switchModel ? '/api/switch' : '/api/wake', url);
+  if (switchModel) wakeUrl.searchParams.set('model', model);
+  const response = await fetch(wakeUrl, {
+    method: 'POST', signal: AbortSignal.timeout(130000),
   });
+  if (!response.ok) throw new Error(`LLM watchdog 喚醒失敗：HTTP ${response.status}`);
+  const result = await response.json();
+  if (result.status !== 'ok' || (!switchModel && result.state !== 'running')) {
+    throw new Error('LLM watchdog 模型載入失敗，請檢查模型與可用記憶體。');
+  }
+}
 
-  return _startingLlamaPromise;
+export async function ensureLocalLlamaServer(baseUrl, model = '') {
+  let url;
+  try { url = new URL(baseUrl); } catch (_) { return; }
+  if (!['127.0.0.1', 'localhost'].includes(url.hostname)) return;
+  model = model === 'default' ? '' : model;
+  const key = JSON.stringify([url.origin, model]);
+  if (!starting.has(key)) {
+    const pending = prepareLocalServer(url, model).finally(() => starting.delete(key));
+    starting.set(key, pending);
+  }
+  return starting.get(key);
+}
+
+export async function ensureLocalLayaDecision(apiUrl) {
+  let url;
+  try { url = new URL(apiUrl || 'http://127.0.0.1:8080/v1/systemone'); } catch (_) { return; }
+  if (!['127.0.0.1', 'localhost'].includes(url.hostname) || url.port !== '8080') return;
+  const key = url.origin;
+  if (!startingLaya.has(key)) {
+    const pending = (async () => {
+      const wakeUrl = new URL('/api/decision/wake', url).href;
+      const response = await fetch(wakeUrl, { method: 'POST', signal: AbortSignal.timeout(130000) });
+      if (!response.ok) throw new Error(`Laya 決策模型喚醒失敗：HTTP ${response.status}`);
+      const result = await response.json();
+      if (result.status !== 'ok') throw new Error(result.message || 'Laya 決策模型載入失敗。');
+    })().finally(() => startingLaya.delete(key));
+    startingLaya.set(key, pending);
+  }
+  return startingLaya.get(key);
 }
