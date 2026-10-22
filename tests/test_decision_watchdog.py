@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+import sys
 import tempfile
 import time
 import unittest
@@ -88,6 +89,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         proc = Mock(pid=111)
         proc.poll.return_value = None
         with patch("watchdog.decision.secrets.token_hex", return_value="test-token"), \
+             patch("watchdog.decision.PYTHON", Path(sys.executable)), \
              patch("watchdog.decision.LOG_FILE"), \
              patch("watchdog.decision.subprocess.Popen", return_value=proc):
             await d.wake()
@@ -102,6 +104,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         proc = Mock(pid=111)
         proc.poll.return_value = None
         with patch("watchdog.decision.secrets.token_hex", return_value="test-token"), \
+             patch("watchdog.decision.PYTHON", Path(sys.executable)), \
              patch("watchdog.decision.LOG_FILE"), \
              patch("watchdog.decision.subprocess.Popen", return_value=proc):
             with self.assertRaisesRegex(RuntimeError, "occupied"):
