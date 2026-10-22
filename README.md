@@ -4,6 +4,13 @@
 
 目前版本：**2.6.1-custom.20261009**（manifest 數字版本：`2.6.1`）。
 
+## 重構企劃與雲端交接
+
+已選定 TypeScript 擴充功能、Go Watchdog 核心並保留 macOS Swift 原生介面；目前尚未開始語言遷移。重構前基準為 `8907786`。
+
+- [重構企劃、分階段交付與雙平台驗收](docs/REFACTOR-PLAN.md)
+- [雲端 Codex 接手指令、基準測試結果與進度](docs/CLOUD-HANDOFF.md)
+
 ## 與原作者版本的差異
 
 原專案為 [jimmysu0309/shinkansen](https://github.com/jimmysu0309/shinkansen)。以下列出此分支維護的客製行為，不代表已逐項比對上游最新版本，也不將繼承的通用功能列為本分支原創。
